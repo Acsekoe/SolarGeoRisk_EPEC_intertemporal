@@ -1,1 +1,1 @@
-# SolarGeoRisk_EPEC_intertemporal
+# SolarGeoRisk_EPEC_extension
