@@ -310,15 +310,22 @@ def load_data_from_excel(path: str) -> ModelData:
             value_f = 0.0 if pd.isna(value) else float(value)
             kappa_Q[r] = value_f
 
+    col_rho_p = _find_col(df_params, ["rho_p (scalar)", "rho_p"])
+    col_p_offer_max = _find_col(df_params, ["p_offer_max (USD/kW)", "p_offer_max"])
+    col_g_exp = _find_col(df_params, ["g_exp_ub (rate/yr)", "g_exp_ub (%/yr)", "g_exp_ub"])
+    col_g_dec = _find_col(df_params, ["g_dec_ub (rate/yr)", "g_dec_ub (%/yr)", "g_dec_ub"])
+    col_f_hold = _find_col(df_params, ["f_hold (mUSD/GW-yr)", "f_hold (USD/kW/yr)", "f_hold (USD/kW)", "f_hold"])
+    col_c_inv = _find_col(df_params, ["c_inv (mUSD/GW-yr)", "c_inv (USD/kW/yr)", "c_inv (USD/kW)", "c_inv"])
+
     for r in regions:
         row = row_map[r]
-        rho_p[r] = _opt_float(row, "rho_p", float(rho_p_default))
-        p_offer_max[r] = _opt_float(row, "p_offer_max", p_offer_max_default)
+        rho_p[r] = _opt_float(row, col_rho_p, float(rho_p_default)) if col_rho_p else float(rho_p_default)
+        p_offer_max[r] = _opt_float(row, col_p_offer_max, p_offer_max_default) if col_p_offer_max else p_offer_max_default
         
-        g_exp_ub[r] = _opt_float(row, "g_exp_ub", 0.05)   # Default 5%
-        g_dec_ub[r] = _opt_float(row, "g_dec_ub", 0.05)   # Default 5%
-        f_hold[r] = _opt_float(row, "f_hold", 0.0)
-        c_inv[r] = _opt_float(row, "c_inv", 0.0)
+        g_exp_ub[r] = _opt_float(row, col_g_exp, 0.05) if col_g_exp else 0.05
+        g_dec_ub[r] = _opt_float(row, col_g_dec, 0.05) if col_g_dec else 0.05
+        f_hold[r] = _opt_float(row, col_f_hold, 0.0) if col_f_hold else 0.0
+        c_inv[r] = _opt_float(row, col_c_inv, 0.0) if col_c_inv else 0.0
         
         kcap_raw = _opt_float(row, "Kcap_2025", float("nan"))
         if not pd.isna(kcap_raw):
@@ -330,6 +337,55 @@ def load_data_from_excel(path: str) -> ModelData:
     for exp in regions:
         for imp in regions:
             p_offer_ub[(exp, imp)] = float(p_offer_max[exp])
+
+    # Time-indexed demand curve generation
+    demand_time_indexed = _get_setting_bool(settings, "demand_time_indexed", True)
+    eps_ref = _get_setting_float(settings, "eps_ref", 0.10)
+    qref_frac = _get_setting_float(settings, "qref_frac", 0.95)
+    pref_markup = _get_setting_float(settings, "pref_markup", 1.5)
+
+    a_dem_t_impl: Dict[Tuple[str, str], float] | None = None
+    b_dem_t_impl: Dict[Tuple[str, str], float] | None = None
+
+    if demand_time_indexed:
+        a_dem_t_impl = {}
+        b_dem_t_impl = {}
+        print(f"[DEMAND CAL] eps_ref={eps_ref} qref_frac={qref_frac} pref_markup={pref_markup}")
+        for tp in _TIMES:
+            a_vals, b_vals = [], []
+            for r in regions:
+                dmax_val = Dmax_t[(r, tp)]
+                Qref = qref_frac * dmax_val
+                Pref = pref_markup * c_man[r]
+                b_val = Pref / (eps_ref * max(Qref, 1e-9))
+                a_val = Pref + b_val * Qref
+                
+                a_dem_t_impl[(r, tp)] = a_val
+                b_dem_t_impl[(r, tp)] = b_val
+                a_vals.append(a_val)
+                b_vals.append(b_val)
+                
+                if r in {"ch", "eu", "roa"} and tp == "2030":
+                    q_pref = (a_val - Pref)/b_val if b_val > 0 else 0
+                    q_2pref = (a_val - 2*Pref)/b_val if b_val > 0 else 0
+                    print(f"[DEMAND CAL] {r},2030: Dmax={dmax_val:.2f} Qref={Qref:.2f} Pref={Pref:.2f} a={a_val:.2f} b={b_val:.4f} Q(Pref)={q_pref:.2f} Q(2Pref)={q_2pref:.2f}")
+
+            if a_vals:
+                print(f"[DEMAND CAL] t={tp}: a min/mean/max = {min(a_vals):.2f}/{sum(a_vals)/len(a_vals):.2f}/{max(a_vals):.2f} "
+                      f"b min/mean/max = {min(b_vals):.4f}/{sum(b_vals)/len(b_vals):.4f}/{max(b_vals):.4f}")
+
+    # Debug print as requested
+    def _print_stats(name: str, d: dict):
+        vals = [v for v in d.values() if not pd.isna(v)]
+        if not vals:
+            print(f"[DATA LOAD] {name}: No values loaded")
+            return
+        print(f"[DATA LOAD] {name}: min={min(vals):.4g}, mean={sum(vals)/len(vals):.4g}, max={max(vals):.4g}")
+        
+    _print_stats("c_inv", c_inv)
+    _print_stats("f_hold", f_hold)
+    _print_stats("g_exp_ub", g_exp_ub)
+    _print_stats("g_dec_ub", g_dec_ub)
 
     return ModelData(
         regions=regions,
@@ -358,4 +414,6 @@ def load_data_from_excel(path: str) -> ModelData:
         Kcap_2025=Kcap_2025,
         f_hold=f_hold,
         c_inv=c_inv,
+        a_dem_t=a_dem_t_impl,
+        b_dem_t=b_dem_t_impl,
     )

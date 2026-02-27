@@ -110,6 +110,11 @@ def solve_gs_intertemporal(
         if shuffle_players:
             random.shuffle(sweep_order)
 
+        # Ensure China plays last
+        if "ch" in sweep_order:
+            sweep_order.remove("ch")
+            sweep_order.append("ch")
+
         for p in sweep_order:
             _update_prox_reference()
             _it.apply_player_fixings(

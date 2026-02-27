@@ -6,7 +6,7 @@ import sys
 import tempfile
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Dict, List, Optional
 
@@ -41,7 +41,7 @@ class RunConfig:
     opttol: float = 1e-4
     
     method: str = "gauss_seidel"
-    iters: int = 30
+    iters: int = 3
     omega: float = 0.7
     tol_strat: float = 1e-2
     tol_obj: float = 1e-2
@@ -52,8 +52,8 @@ class RunConfig:
     convergence_mode: str = "combined"  # "strategy", "objective", or "combined"
     workers: int = 1  # 1=sequential, >1=parallel
     worker_timeout: float = 120.0
-    player_order: List[str] | None = None
-    shuffle_players: bool = True
+    player_order: List[str] | None = field(default_factory=lambda: ["roa", "af", "row", "us", "eu", "apac", "ch"])
+    shuffle_players: bool = False
     init_scenario: str | None = None
     warmup_solver: str | None = None
     warmup_iters: int = 5
@@ -73,17 +73,26 @@ class RunConfig:
     use_quad: bool = True
 
     # Scenario name (e.g., "high_all", "low_all") to override init_q_offer
-    scenario: str | None = "mid_all"
+    scenario: str | None = "2024_actual"
 
 
 
-# Scenario definitions (fractions of Qcap)
+# Scenario definitions (fractions of Qcap, or exact values if treated differently in loader)
 INIT_SCENARIOS = {
     "high_all": {"ch": 0.8, "eu": 0.8, "us": 0.8, "apac": 0.8, "roa": 0.8, "row": 0.8},
     "low_non_ch": {"ch": 0.8, "eu": 0.0, "us": 0.0, "apac": 0.8, "roa": 0.0, "row": 0.0},
     "low_eu_us_row": {"ch": 0.8, "eu": 0.0, "us": 0.0, "apac": 0.8, "roa": 0.8, "row": 0.0},
     "mid_all": {"ch": 0.5, "eu": 0.5, "us": 0.5, "apac": 0.5, "roa": 0.5, "row": 0.5},
-    "low_all": {"ch": 0.2, "eu": 0.0, "us": 0.0, "apac": 0.2, "roa": 0.0, "row": 0.0},
+    # Assuming regions: ch (China), eu (Europe), us (North America), apac (Malaysia+Vietnam+South Korea+India+Thailand), roa (Rest of Asia), af (not specified but kept at 0.22597), row (Rest of World)
+    "2024_actual": {
+        "ch": 305.1168528, 
+        "eu": 7.210065265, 
+        "us": 7.537795504, 
+        "apac": 5.899144307 + 9.831907179 + 1.638651197 + 11.47055838 + 7.210065265, # MY+VN+KR+IN+TH
+        "roa": 0.22597, 
+        "af": 0.22597, # Using the value originally entered for roa/af as a placeholder if not explicitly given, or 0
+        "row": 96.02496012
+    },
 }
 
 
@@ -211,10 +220,14 @@ def _build_initial_state(data, cfg: RunConfig) -> dict[str, dict] | None:
         init_q_source = INIT_SCENARIOS["high_all"]
 
     init_q: Dict[Tuple[str, str], float] = {}
+    is_absolute = (scenario_name == "2024_actual")
     for r in data.players:
-        frac = float(init_q_source.get(r, 0.8))
+        val = float(init_q_source.get(r, 0.8 if not is_absolute else float(data.Qcap.get(r, 0.0))))
         for t in data.times:
-            init_q[(r, t)] = frac * float(data.Qcap[r])
+            if is_absolute:
+                init_q[(r, t)] = val
+            else:
+                init_q[(r, t)] = val * float(data.Qcap[r])
 
     print(f"[CONFIG] Initial Q_offer: {init_q}")
     return {"Q_offer": init_q, "p_offer": {}}

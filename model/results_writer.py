@@ -47,6 +47,11 @@ def write_results_excel(
             k_exp = state.get("k_exp", {})
             k_dec = state.get("k_dec", {})
             
+            a_dem_used = data.a_dem_t.get((r, t), data.a_dem.get(r, 0.0)) if data.a_dem_t else data.a_dem.get(r, 0.0)
+            b_dem_used = data.b_dem_t.get((r, t), data.b_dem.get(r, 0.0)) if data.b_dem_t else data.b_dem.get(r, 0.0)
+            lam_val = _safe_get(lam, (r, t), 0.0)
+            Q_implied = max(0.0, (a_dem_used - lam_val) / b_dem_used) if b_dem_used > 0 else 0.0
+
             region_rows.append(
                 {
                     "r": r,
@@ -56,11 +61,14 @@ def write_results_excel(
                     "k_exp": _safe_get(k_exp, (r, t), 0.0),
                     "k_dec": _safe_get(k_dec, (r, t), 0.0),
                     "x_dem": _safe_get(x_dem, (r, t), 0.0),
-                    "lam": _safe_get(lam, (r, t), 0.0),
+                    "lam": lam_val,
                     "obj": _safe_get(obj, r, 0.0), # Objective is scalar per region
                     "imports": float(imports),
                     "exports": float(exports),
                     "Qcap_init": float(data.Qcap.get(r, 0.0)),
+                    "a_dem_used": a_dem_used,
+                    "b_dem_used": b_dem_used,
+                    "Q_implied": Q_implied,
                 }
             )
             

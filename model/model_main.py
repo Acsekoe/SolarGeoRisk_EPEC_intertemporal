@@ -31,7 +31,7 @@ from gamspy import (
 z = gp.Number(0)
 
 _DEFAULT_TIMES = ["2025", "2030", "2035", "2040"]
-_DEFAULT_YTN = {"2025": 5.0, "2030": 5.0, "2035": 5.0, "2040": 0.0}
+_DEFAULT_YTN = {"2025": 5.0, "2030": 5.0, "2035": 5.0, "2040": 5.0}
 
 
 # =============================================================================
@@ -445,7 +445,7 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
     beta_dem = Variable(m, "beta_dem", domain=[R, T], type=VariableType.POSITIVE)
     psi_dem = Variable(m, "psi_dem", domain=[R, T], type=VariableType.POSITIVE)
 
-    lam_var.lo[R, T] = 0.0
+    #lam_var.lo[R, T] = 0.0
     lam_var.up[R, T] = lam_ub[R]
     beta_dem.up[R, T] = lam_ub[R]
     psi_dem.up[R, T] = lam_ub[R]
@@ -569,6 +569,13 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
     eq_dec_limit = Equation(m, "eq_dec_limit", domain=[R, T])
     eq_dec_limit[R, T] = k_dec[R, T] <= g_dec_p[R] * ytn_p[T] * Kcap[R, T]
 
+    # Prevent simultaneous expansion and decommissioning (k_exp * k_dec = 0)
+    eq_comp_exp_dec = Equation(m, "eq_comp_exp_dec", domain=[R, T])
+    if eps_comp == 0.0:
+        eq_comp_exp_dec[R, T] = k_exp[R, T] * k_dec[R, T] == z
+    else:
+        eq_comp_exp_dec[R, T] = k_exp[R, T] * k_dec[R, T] <= eps_value
+
 
     # =====================================================================
     # Collect equations
@@ -589,6 +596,7 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
         "eq_offer_cap": eq_offer_cap,
         "eq_exp_limit": eq_exp_limit,
         "eq_dec_limit": eq_dec_limit,
+        "eq_comp_exp_dec": eq_comp_exp_dec,
     }
 
     # =====================================================================
@@ -603,7 +611,7 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
         # U_rt(d) - lam_r * d_r
         d_surplus_t = Sum(
             T,
-            beta_p[T] * (
+            beta_p[T] * ytn_p[T] * (
                 a_dem_t_p[r, T] * x_dem[r, T]
                 - (b_dem_t_p[r, T] / gp.Number(2.0)) * x_dem[r, T] * x_dem[r, T]
                 - lam_var[r, T] * x_dem[r, T]
@@ -613,7 +621,7 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
         # Producer term
         producer_term_t = Sum(
             [j, T],
-            beta_p[T] * (
+            beta_p[T] * ytn_p[T] * (
                 lam_var[j, T]
                 - c_man[r]
                 - c_ship[r, j]
@@ -638,11 +646,11 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
         if use_quad:
             pen_p_offer_quad = Sum(
                 T,
-                -gp.Number(0.5) * rho_p_p[r] * Sum(j, p_offer[r, j, T] * p_offer[r, j, T]),
+                -gp.Number(0.5) * ytn_p[T] * rho_p_p[r] * Sum(j, p_offer[r, j, T] * p_offer[r, j, T]),
             )
             pen_q_quad = Sum(
                 T,
-                -gp.Number(0.5) * kappa_Q[r] * (
+                -gp.Number(0.5) * ytn_p[T] * kappa_Q[r] * (
                     (Q_offer[r, T] - Sum(j, x[r, j, T]))
                     * (Q_offer[r, T] - Sum(j, x[r, j, T]))
                 ),
@@ -651,24 +659,24 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
         # Linear penalties
         pen_p_offer_lin = Sum(
             T,
-            -rho_p_p[r] * Sum(j, p_offer[r, j, T]),
+            -ytn_p[T] * rho_p_p[r] * Sum(j, p_offer[r, j, T]),
         )
         pen_q_lin = Sum(
             T,
-            -kappa_Q[r] * Q_offer[r, T],
+            -ytn_p[T] * kappa_Q[r] * Q_offer[r, T],
         )
 
         # Proximal regularization
         pen_prox_q = Sum(
             T,
-            -gp.Number(0.5) * rho_prox * (
+            -gp.Number(0.5) * ytn_p[T] * rho_prox * (
                 (Q_offer[r, T] - Q_offer_last[r, T])
                 * (Q_offer[r, T] - Q_offer_last[r, T])
             ),
         )
         pen_prox_poffer = Sum(
             T,
-            -gp.Number(0.5) * rho_prox * Sum(
+            -gp.Number(0.5) * ytn_p[T] * rho_prox * Sum(
                 j,
                 (p_offer[r, j, T] - p_offer_last[r, j, T])
                 * (p_offer[r, j, T] - p_offer_last[r, j, T]),
