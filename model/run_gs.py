@@ -41,7 +41,7 @@ class RunConfig:
     opttol: float = 1e-4
     
     method: str = "gauss_seidel"
-    iters: int = 3
+    iters: int = 30
     omega: float = 0.7
     tol_strat: float = 1e-2
     tol_obj: float = 1e-2
@@ -52,7 +52,7 @@ class RunConfig:
     convergence_mode: str = "combined"  # "strategy", "objective", or "combined"
     workers: int = 1  # 1=sequential, >1=parallel
     worker_timeout: float = 120.0
-    player_order: List[str] | None = field(default_factory=lambda: ["roa", "af", "row", "us", "eu", "apac", "ch"])
+    player_order: List[str] | None = field(default_factory=lambda: ["ch", "roa", "af", "row", "us", "eu", "apac"])
     shuffle_players: bool = False
     init_scenario: str | None = None
     warmup_solver: str | None = None
@@ -68,8 +68,8 @@ class RunConfig:
     knitro_algorithm: int | None = None
 
     # Scalers
-    kappa_q: float | None = 0.005
-    rho_prox: float | None = 0.005
+    kappa_q: float | None = 0.00
+    rho_prox: float | None = 0.00
     use_quad: bool = True
 
     # Scenario name (e.g., "high_all", "low_all") to override init_q_offer
@@ -118,7 +118,7 @@ def _safe_float(v: object, default: float = 0.0) -> float:
 
 
 
-def _print_state_summary(*, regions: list[str], state: dict[str, dict], tag: str = "SUMMARY") -> None:
+def _print_state_summary(*, data: ModelData, regions: list[str], state: dict[str, dict], tag: str = "SUMMARY") -> None:
     q_offer = state.get("Q_offer", {}) or {}
     lam = state.get("lam", {}) or {}
 
@@ -141,12 +141,19 @@ def _print_state_summary(*, regions: list[str], state: dict[str, dict], tag: str
             d_val = _safe_float(state.get("k_dec", {}).get((r, t), 0.0))
             l_val = _safe_float(lam.get((r, t), 0.0))
             
+            w_cum_val = _safe_float(state.get("W_cum", {}).get((r, t), 0.0))
+            
+            # Deterministically calculate c_man_val instead of taking the solver's unconstrained floating bounds for non-focal players
+            base_c = data.c_man.get(r, 0.0)
+            c_floor = max(50.0, base_c * 0.5)
+            c_man_val = max(c_floor, base_c - 0.022 * w_cum_val)
+            
             # Find max p_offer for this region and time (from r to any destination)
             p_offer_map = state.get("p_offer", {})
             max_p = max([_safe_float(v) for k, v in p_offer_map.items() 
                           if isinstance(k, tuple) and len(k) == 3 and k[0] == r and k[2] == t], default=0.0)
             
-            print(f"  {r:<4} {t:<4} Q={q_val:<8.2f} K={k_val:<8.2f} E={i_val:<7.2f} D={d_val:<7.2f} lam={l_val:<6.2f} poffer={max_p:<6.2f}")
+            print(f"  {r:<4} {t:<4} Q={q_val:<8.2f} K={k_val:<8.2f} E={i_val:<7.2f} D={d_val:<7.2f} lam={l_val:<6.2f} poffer={max_p:<6.2f} LBD_cum={w_cum_val:<8.2f} c_man={c_man_val:<6.2f}")
 
 
 def _gams_workdir(run_id: str, configured_workdir: str | None) -> str:
@@ -259,6 +266,8 @@ def _append_detailed_iter_rows(
     kcap_map = state.get("Kcap", {})
     iexp_map = state.get("k_exp", {})
     idec_map = state.get("k_dec", {})
+    w_cum_map = state.get("W_cum", {})
+    c_man_var_map = state.get("c_man_var", {})
     
     for r in data.regions:
         for t in times:
@@ -276,6 +285,8 @@ def _append_detailed_iter_rows(
                 "mu": _safe_float(mu_map.get((r, t))),
                 "beta_dem": _safe_float(beta_dem_map.get((r, t))),
                 "psi_dem": _safe_float(psi_dem_map.get((r, t))),
+                "W_cum": _safe_float(w_cum_map.get((r, t))),
+                "c_man_var": max(max(50.0, data.c_man.get(r, 0.0) * 0.5), data.c_man.get(r, 0.0) - 0.022 * _safe_float(w_cum_map.get((r, t)))),
                 "obj": _safe_float(obj_map.get(r)) if r in data.players else 0.0,
             }
     
@@ -341,7 +352,7 @@ def run(cfg: RunConfig) -> str:
         # Show shuffled player order if available
         if "_sweep_order" in state:
             print(f"[ITER {it}] player order: {state['_sweep_order']}")
-        _print_state_summary(regions=list(data.regions), state=state, tag=f"ITER {it}")
+        _print_state_summary(data=data, regions=list(data.regions), state=state, tag=f"ITER {it}")
         _append_detailed_iter_rows(
             data=data,
             state=state,
@@ -391,7 +402,7 @@ def run(cfg: RunConfig) -> str:
         if sweep_times:
             print(f"[TIMING] Mean sweep time: {sum(sweep_times)/len(sweep_times):.2f}s  (n={len(sweep_times)})")
 
-    _print_state_summary(regions=list(data.regions), state=state, tag="FINAL")
+    _print_state_summary(data=data, regions=list(data.regions), state=state, tag="FINAL")
 
     write_results_excel(
         data=data,

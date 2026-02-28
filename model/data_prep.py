@@ -350,25 +350,36 @@ def load_data_from_excel(path: str) -> ModelData:
     if demand_time_indexed:
         a_dem_t_impl = {}
         b_dem_t_impl = {}
-        print(f"[DEMAND CAL] eps_ref={eps_ref} qref_frac={qref_frac} pref_markup={pref_markup}")
+        
         for tp in _TIMES:
             a_vals, b_vals = [], []
             for r in regions:
                 dmax_val = Dmax_t[(r, tp)]
-                Qref = qref_frac * dmax_val
-                Pref = pref_markup * c_man[r]
-                b_val = Pref / (eps_ref * max(Qref, 1e-9))
-                a_val = Pref + b_val * Qref
+                
+                # Look for an explicit year-column in the Excel row map, like "a_dem_2030" or "a_dem_2030 (USD/kW)"
+                a_col = _find_col(df_params, [f"a_dem_{tp}", f"a_dem_{tp} (USD/kW)"])
+                a_val_raw = row_map[r].get(a_col, float("nan")) if a_col else float("nan")
+                
+                b_col = _find_col(df_params, [f"b_dem_{tp}", f"b_dem_{tp} (USD/kW)", f"b_dem_{tp} (USD/GW)"])
+                b_val_raw = row_map[r].get(b_col, float("nan")) if b_col else float("nan")
+
+                if not pd.isna(a_val_raw):
+                    a_val = float(a_val_raw)
+                else:
+                    a_val = float(a_dem.get(r, 500.0))
+                    if pd.isna(a_val):
+                        a_val = 500.0
+
+                if not pd.isna(b_val_raw):
+                    b_val = float(b_val_raw)
+                else:
+                    # Fallback to horizontal stretching if b_dem_t isn't explicitly provided
+                    b_val = a_val / max(dmax_val, 1e-9)
                 
                 a_dem_t_impl[(r, tp)] = a_val
                 b_dem_t_impl[(r, tp)] = b_val
                 a_vals.append(a_val)
                 b_vals.append(b_val)
-                
-                if r in {"ch", "eu", "roa"} and tp == "2030":
-                    q_pref = (a_val - Pref)/b_val if b_val > 0 else 0
-                    q_2pref = (a_val - 2*Pref)/b_val if b_val > 0 else 0
-                    print(f"[DEMAND CAL] {r},2030: Dmax={dmax_val:.2f} Qref={Qref:.2f} Pref={Pref:.2f} a={a_val:.2f} b={b_val:.4f} Q(Pref)={q_pref:.2f} Q(2Pref)={q_2pref:.2f}")
 
             if a_vals:
                 print(f"[DEMAND CAL] t={tp}: a min/mean/max = {min(a_vals):.2f}/{sum(a_vals)/len(a_vals):.2f}/{max(a_vals):.2f} "

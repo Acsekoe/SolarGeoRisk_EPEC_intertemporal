@@ -273,10 +273,19 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
     # Step 3 — Parameters
     # =====================================================================
     # Time-invariant params (region only)
-    c_man = Parameter(
-        m, "c_man", domain=[R],
+    c_man_base_p = Parameter(
+        m, "c_man_base", domain=[R],
         records=[(r, data.c_man[r]) for r in data.regions],
     )
+    theta_lbd_p = Parameter(
+        m, "theta_lbd", domain=[R],
+        records=[(r, 0.022) for r in data.regions], # Default realistic learning rate
+    )
+    c_man_floor_p = Parameter(
+        m, "c_man_floor", domain=[R],
+        records=[(r, max(50.0, data.c_man[r] * 0.5)) for r in data.regions], # Absolute minimum cost floor
+    )
+    
     c_ship = Parameter(
         m, "c_ship", domain=[exp, imp],
         records=[
@@ -425,9 +434,19 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
     # Link p_offer up bound
     p_offer.up[exp, imp, T] = p_offer_ub_p[exp, imp]
 
+    # -- Learning-By-Doing Variables --
+    W_cum = Variable(m, "W_cum", domain=[R, T], type=VariableType.POSITIVE)
+    c_man_var = Variable(m, "c_man_var", domain=[R, T], type=VariableType.POSITIVE)
+    
+    # Establish strict variable lower bound for cost floor
+    c_man_var.lo[R, T] = c_man_floor_p[R]
+
     # Pre-fix Kcap initially and lock end-period expansion
     for r in data.regions:
         Kcap.fx[r, times[0]] = kcap_2025_dict[r]
+        # Initialize cumulative volume at 0 for the first period
+        W_cum.fx[r, times[0]] = 0.0
+        
         # No investment or decommission in 2040 (terminal)
         k_exp.fx[r, times[-1]] = 0.0
         k_dec.fx[r, times[-1]] = 0.0
@@ -576,7 +595,33 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
     else:
         eq_comp_exp_dec[R, T] = k_exp[R, T] * k_dec[R, T] <= eps_value
 
+    # --- Learning-By-Doing (LBD) Equations ---
+    
+    # Cumulative volume transitions
+    eq_w_trans_30 = Equation(m, "eq_w_trans_30", domain=[R])
+    eq_w_trans_30[R] = (
+        W_cum[R, "2030"] == W_cum[R, "2025"] + ytn_p["2025"] * Sum(imp, x[R, imp, "2025"])
+    )
 
+    eq_w_trans_35 = Equation(m, "eq_w_trans_35", domain=[R])
+    eq_w_trans_35[R] = (
+        W_cum[R, "2035"] == W_cum[R, "2030"] + ytn_p["2030"] * Sum(imp, x[R, imp, "2030"])
+    )
+
+    eq_w_trans_40 = Equation(m, "eq_w_trans_40", domain=[R])
+    eq_w_trans_40[R] = (
+        W_cum[R, "2040"] == W_cum[R, "2035"] + ytn_p["2035"] * Sum(imp, x[R, imp, "2035"])
+    )
+
+    # Cost curve constraints (Inequality allows W_cum to grow past the floor bound)
+    eq_c_man_curve = Equation(m, "eq_c_man_curve", domain=[R, T])
+    eq_c_man_curve[R, T] = (
+        c_man_var[R, T] >= c_man_base_p[R] - (theta_lbd_p[R] * W_cum[R, T])
+    )
+
+    # Pin domestic offer price to marginal manufacturing cost
+    eq_p_offer_self = Equation(m, "eq_p_offer_self", domain=[R, T])
+    eq_p_offer_self[R, T] = p_offer[R, R, T] == c_man_var[R, T]
     # =====================================================================
     # Collect equations
     # =====================================================================
@@ -597,6 +642,11 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
         "eq_exp_limit": eq_exp_limit,
         "eq_dec_limit": eq_dec_limit,
         "eq_comp_exp_dec": eq_comp_exp_dec,
+        "eq_w_trans_30": eq_w_trans_30,
+        "eq_w_trans_35": eq_w_trans_35,
+        "eq_w_trans_40": eq_w_trans_40,
+        "eq_c_man_curve": eq_c_man_curve,
+        "eq_p_offer_self": eq_p_offer_self,
     }
 
     # =====================================================================
@@ -623,7 +673,7 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
             [j, T],
             beta_p[T] * ytn_p[T] * (
                 lam_var[j, T]
-                - c_man[r]
+                - c_man_var[r, T]
                 - c_ship[r, j]
             ) * x[r, j, T],
         )
@@ -727,7 +777,9 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
             "a_dem_t": a_dem_t_p,
             "b_dem_t": b_dem_t_p,
             "Kcap_init": Kcap_init_p,
-            "c_man": c_man,
+            "c_man_base": c_man_base_p,
+            "theta_lbd": theta_lbd_p,
+            "c_man_floor": c_man_floor_p,
             "c_ship": c_ship,
             "p_offer_ub": p_offer_ub_p,
             "rho_p": rho_p_p,
@@ -752,6 +804,8 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
             "lam": lam_var,
             "mu": mu,
             "gamma": gamma,
+            "W_cum": W_cum,
+            "c_man_var": c_man_var,
             "beta_dem": beta_dem,
             "psi_dem": psi_dem,
         },
@@ -902,6 +956,8 @@ def extract_state(
         "gamma": _maybe_var("gamma"),
         "beta_dem": _maybe_var("beta_dem"),
         "psi_dem": _maybe_var("psi_dem"),
+        "W_cum": _maybe_var("W_cum"),
+        "c_man_var": _maybe_var("c_man_var"),
         "obj": obj_values,
     }
 
