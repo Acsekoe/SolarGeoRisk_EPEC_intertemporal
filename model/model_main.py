@@ -425,6 +425,7 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
     # -- ULP strategic variables --
     Q_offer = Variable(m, "Q_offer", domain=[R, T], type=VariableType.POSITIVE)
     p_offer = Variable(m, "p_offer", domain=[exp, imp, T], type=VariableType.POSITIVE)
+    a_bid = Variable(m, "a_bid", domain=[R, T], type=VariableType.POSITIVE)
     
     # Capacity variables
     Kcap = Variable(m, "Kcap", domain=[R, T], type=VariableType.POSITIVE)
@@ -433,6 +434,9 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
 
     # Link p_offer up bound
     p_offer.up[exp, imp, T] = p_offer_ub_p[exp, imp]
+    
+    # Restrict a_bid to not exceed true demand intercept
+    a_bid.up[R, T] = a_dem_t_p[R, T]
 
     # -- Learning-By-Doing Variables --
     W_cum = Variable(m, "W_cum", domain=[R, T], type=VariableType.POSITIVE)
@@ -516,7 +520,7 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
 
     eq_stat_dem = Equation(m, "eq_stat_dem", domain=[imp, T])
     eq_stat_dem[imp, T] = (
-        -(a_dem_t_p[imp, T] - b_dem_t_p[imp, T] * x_dem[imp, T])
+        -(a_bid[imp, T] - b_dem_t_p[imp, T] * x_dem[imp, T])
         + lam_var[imp, T]
         + beta_dem[imp, T]
         - psi_dem[imp, T]
@@ -580,6 +584,10 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
     eq_offer_cap = Equation(m, "eq_offer_cap", domain=[R, T])
     eq_offer_cap[R, T] = Q_offer[R, T] <= Kcap[R, T]
 
+    # Pin domestic self-offer to domestic manufacturing cost
+    eq_self_offer = Equation(m, "eq_self_offer", domain=[R, T])
+    eq_self_offer[R, T] = p_offer[R, R, T] == c_man_var[R, T]
+
     # Expansion rate limit: k_exp <= g_exp * y_t * K_cap
     eq_exp_limit = Equation(m, "eq_exp_limit", domain=[R, T])
     eq_exp_limit[R, T] = k_exp[R, T] <= g_exp_p[R] * ytn_p[T] * Kcap[R, T]
@@ -639,6 +647,7 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
         "eq_cap_trans_35": eq_cap_trans_35,
         "eq_cap_trans_40": eq_cap_trans_40,
         "eq_offer_cap": eq_offer_cap,
+        "eq_self_offer": eq_self_offer,
         "eq_exp_limit": eq_exp_limit,
         "eq_dec_limit": eq_dec_limit,
         "eq_comp_exp_dec": eq_comp_exp_dec,
@@ -796,6 +805,7 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
         vars={
             "Q_offer": Q_offer,
             "p_offer": p_offer,
+            "a_bid": a_bid,
             "Kcap": Kcap,
             "k_exp": k_exp,
             "k_dec": k_dec,
@@ -824,6 +834,7 @@ def apply_player_fixings(
     theta_p_offer: Dict[Tuple[str, str, str], float],
     theta_k_exp: Dict[Tuple[str, str], float],
     theta_k_dec: Dict[Tuple[str, str], float],
+    theta_a_bid: Dict[Tuple[str, str], float],
     *,
     player: str,
 ) -> None:
@@ -833,6 +844,7 @@ def apply_player_fixings(
 
     Q_offer = ctx.vars["Q_offer"]
     p_offer = ctx.vars["p_offer"]
+    a_bid = ctx.vars["a_bid"]
     Kcap = ctx.vars["Kcap"]
     k_exp = ctx.vars["k_exp"]
     k_dec = ctx.vars["k_dec"]
@@ -864,6 +876,10 @@ def apply_player_fixings(
                     k_exp.up[r, tp] = float("inf") # Bound managed by eq_exp_limit
                     k_dec.lo[r, tp] = 0.0
                     k_dec.up[r, tp] = float("inf") # Bound managed by eq_dec_limit
+                
+                # a_bid freed for current player's own region
+                a_bid.lo[r, tp] = 0.0
+                a_bid.up[r, tp] = float(data.a_dem_t[(r, tp)] if data.a_dem_t else data.a_dem.get(r, 0.0))
 
             elif r in data.players:
                 # Fix other strategic player
@@ -878,6 +894,10 @@ def apply_player_fixings(
                 d_val = float(theta_k_dec.get((r, tp), 0.0))
                 k_dec.lo[r, tp] = d_val
                 k_dec.up[r, tp] = d_val
+                
+                a_val = float(theta_a_bid.get((r, tp), data.a_dem_t[(r, tp)] if data.a_dem_t else data.a_dem.get(r, 0.0)))
+                a_bid.lo[r, tp] = a_val
+                a_bid.up[r, tp] = a_val
 
                 # Kcap is determined by transitions — fix it
                 if tp == times[0]:
@@ -901,6 +921,10 @@ def apply_player_fixings(
                 k_exp.up[r, tp] = 0.0
                 k_dec.lo[r, tp] = 0.0
                 k_dec.up[r, tp] = 0.0
+                
+                a_val = float(data.a_dem_t[(r, tp)] if data.a_dem_t else data.a_dem.get(r, 0.0))
+                a_bid.lo[r, tp] = a_val
+                a_bid.up[r, tp] = a_val
 
     # -- Offer Prices --
     for ex in data.regions:
@@ -946,6 +970,7 @@ def extract_state(
     return {
         "Q_offer": _maybe_var("Q_offer"),
         "p_offer": _maybe_var("p_offer"),
+        "a_bid": _maybe_var("a_bid"),
         "Kcap": _maybe_var("Kcap"),
         "k_exp": _maybe_var("k_exp"),
         "k_dec": _maybe_var("k_dec"),

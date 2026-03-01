@@ -41,7 +41,7 @@ class RunConfig:
     opttol: float = 1e-4
     
     method: str = "gauss_seidel"
-    iters: int = 30
+    iters: int = 5
     omega: float = 0.7
     tol_strat: float = 1e-2
     tol_obj: float = 1e-2
@@ -52,7 +52,7 @@ class RunConfig:
     convergence_mode: str = "combined"  # "strategy", "objective", or "combined"
     workers: int = 1  # 1=sequential, >1=parallel
     worker_timeout: float = 120.0
-    player_order: List[str] | None = field(default_factory=lambda: ["ch", "roa", "af", "row", "us", "eu", "apac"])
+    player_order: List[str] | None = field(default_factory=lambda: ["roa", "af", "row", "us", "eu", "apac", "ch"])
     shuffle_players: bool = False
     init_scenario: str | None = None
     warmup_solver: str | None = None
@@ -76,6 +76,14 @@ class RunConfig:
     scenario: str | None = "2024_actual"
 
 
+# Multipliers applied to the base scenario for each time period
+# This allows Q_offer to grow proportionally over time in the initial guess.
+INIT_STRATEGY_MATRIX = {
+    "2025": 1.0,
+    "2030": 1.5,
+    "2035": 2.0,
+    "2040": 2.5,
+}
 
 # Scenario definitions (fractions of Qcap, or exact values if treated differently in loader)
 INIT_SCENARIOS = {
@@ -141,6 +149,10 @@ def _print_state_summary(*, data: ModelData, regions: list[str], state: dict[str
             d_val = _safe_float(state.get("k_dec", {}).get((r, t), 0.0))
             l_val = _safe_float(lam.get((r, t), 0.0))
             
+            x_dem_val = _safe_float(state.get("x_dem", {}).get((r, t), 0.0))
+            a_true = float(data.a_dem_t.get((r, t), 0.0)) if data.a_dem_t else float(data.a_dem.get(r, 0.0))
+            a_bid_val = _safe_float(state.get("a_bid", {}).get((r, t), a_true))
+            
             w_cum_val = _safe_float(state.get("W_cum", {}).get((r, t), 0.0))
             
             # Deterministically calculate c_man_val instead of taking the solver's unconstrained floating bounds for non-focal players
@@ -153,7 +165,7 @@ def _print_state_summary(*, data: ModelData, regions: list[str], state: dict[str
             max_p = max([_safe_float(v) for k, v in p_offer_map.items() 
                           if isinstance(k, tuple) and len(k) == 3 and k[0] == r and k[2] == t], default=0.0)
             
-            print(f"  {r:<4} {t:<4} Q={q_val:<8.2f} K={k_val:<8.2f} E={i_val:<7.2f} D={d_val:<7.2f} lam={l_val:<6.2f} poffer={max_p:<6.2f} LBD_cum={w_cum_val:<8.2f} c_man={c_man_val:<6.2f}")
+            print(f"  {r:<4} {t:<4} D={x_dem_val:<6.1f} a_bid={a_bid_val:<6.1f} | Q={q_val:<7.1f} K={k_val:<7.1f} I={i_val:<5.1f} D={d_val:<5.1f} lam={l_val:<6.1f} poffer={max_p:<6.1f} | c={c_man_val:<6.1f}")
 
 
 def _gams_workdir(run_id: str, configured_workdir: str | None) -> str:
@@ -229,15 +241,38 @@ def _build_initial_state(data, cfg: RunConfig) -> dict[str, dict] | None:
     init_q: Dict[Tuple[str, str], float] = {}
     is_absolute = (scenario_name == "2024_actual")
     for r in data.players:
-        val = float(init_q_source.get(r, 0.8 if not is_absolute else float(data.Qcap.get(r, 0.0))))
+        base_val = float(init_q_source.get(r, 0.8 if not is_absolute else float(data.Qcap.get(r, 0.0))))
         for t in data.times:
+            time_mult = INIT_STRATEGY_MATRIX.get(t, 1.0)
+            val = base_val * time_mult
+            
             if is_absolute:
                 init_q[(r, t)] = val
             else:
                 init_q[(r, t)] = val * float(data.Qcap[r])
 
-    print(f"[CONFIG] Initial Q_offer: {init_q}")
-    return {"Q_offer": init_q, "p_offer": {}}
+    print(f"[CONFIG] Initial Q_offer matrix created")
+    
+    init_p_offer: Dict[Tuple[str, str, str], float] = {}
+    for ex in data.regions:
+        base_cost = float(data.c_man.get(ex, 0.0))
+        for im in data.regions:
+            for t in data.times:
+                init_p_offer[(ex, im, t)] = base_cost
+
+    print(f"[CONFIG] Initial p_offer initialized to regional c_man")
+    
+    init_a_bid: Dict[Tuple[str, str], float] = {}
+    if data.a_dem_t is not None:
+        for r in data.regions:
+            for tp in data.times:
+                init_a_bid[(r, tp)] = float(data.a_dem_t[(r, tp)])
+    else:
+        for r in data.regions:
+            for tp in data.times:
+                init_a_bid[(r, tp)] = float(data.a_dem.get(r, 0.0))
+
+    return {"Q_offer": init_q, "p_offer": init_p_offer, "a_bid": init_a_bid}
 
 
 def _append_detailed_iter_rows(
@@ -267,6 +302,7 @@ def _append_detailed_iter_rows(
     iexp_map = state.get("k_exp", {})
     idec_map = state.get("k_dec", {})
     w_cum_map = state.get("W_cum", {})
+    a_bid_map = state.get("a_bid", {})
     c_man_var_map = state.get("c_man_var", {})
     
     for r in data.regions:
@@ -286,9 +322,15 @@ def _append_detailed_iter_rows(
                 "beta_dem": _safe_float(beta_dem_map.get((r, t))),
                 "psi_dem": _safe_float(psi_dem_map.get((r, t))),
                 "W_cum": _safe_float(w_cum_map.get((r, t))),
+                "a_bid": _safe_float(a_bid_map.get((r, t), data.a_dem_t.get((r, t)) if data.a_dem_t else data.a_dem.get(r))),
                 "c_man_var": max(max(50.0, data.c_man.get(r, 0.0) * 0.5), data.c_man.get(r, 0.0) - 0.022 * _safe_float(w_cum_map.get((r, t)))),
                 "obj": _safe_float(obj_map.get(r)) if r in data.players else 0.0,
             }
+            
+            # Post-solve computed diagnostics
+            x_dem_val = sum(_safe_float(x_map.get((src, r, t))) for src in data.regions)
+            a_true = float(data.a_dem_t.get((r, t), 0.0)) if data.a_dem_t else float(data.a_dem.get(r, 0.0))
+            row["wedge"] = a_true - float(row["a_bid"] or a_true)
     
             for dest in data.regions:
                 row[f"x_exp_to_{dest}"] = _safe_float(x_map.get((r, dest, t)))

@@ -210,6 +210,7 @@ def load_data_from_excel(path: str) -> ModelData:
 
     # --- Time-indexed Dmax ---
     Dmax_t: Dict[Tuple[str, str], float] = {}
+    
     for tp in _TIMES:
         col = _find_col(df_params, _DMAX_COL_CANDIDATES[tp])
         for r in regions:
