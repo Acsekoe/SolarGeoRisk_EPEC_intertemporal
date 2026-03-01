@@ -311,7 +311,6 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
         m, "Dmax_t", domain=[R, T],
         records=[(r, tp, dmax_t_dict[(r, tp)]) for r in data.regions for tp in times],
     )
-    target_ratio_p = Parameter(m, "target_ratio", records=0.85)
 
     p_offer_ub_p = Parameter(
         m, "p_offer_ub", domain=[exp, imp],
@@ -468,13 +467,11 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
     gamma = Variable(m, "gamma", domain=[exp, imp, T], type=VariableType.POSITIVE)
     beta_dem = Variable(m, "beta_dem", domain=[R, T], type=VariableType.POSITIVE)
     psi_dem = Variable(m, "psi_dem", domain=[R, T], type=VariableType.POSITIVE)
-    mu_rps = Variable(m, "mu_rps", domain=[R, T], type=VariableType.POSITIVE)
 
     #lam_var.lo[R, T] = 0.0
     lam_var.up[R, T] = lam_ub[R]
     beta_dem.up[R, T] = lam_ub[R]
     psi_dem.up[R, T] = lam_ub[R]
-    mu_rps.up[R, T] = lam_ub[R]
     mu.up[R, T] = mu_ub[R]
     gamma.up[exp, imp, T] = gamma_ub[exp, imp]
 
@@ -510,9 +507,6 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
     eq_cap = Equation(m, "eq_cap", domain=[exp, T])
     eq_cap[exp, T] = Q_offer[exp, T] - Sum(imp, x[exp, imp, T]) >= z
 
-    eq_rps_target = Equation(m, "eq_rps_target", domain=[R, T])
-    eq_rps_target[R, T] = x_dem[R, T] >= target_ratio_p * Dmax_t_p[R, T]
-
     # --- Stationarity (KKT) ---
     eq_stat_x = Equation(m, "eq_stat_x", domain=[exp, imp, T])
     eq_stat_x[exp, imp, T] = (
@@ -530,7 +524,6 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
         + lam_var[imp, T]
         + beta_dem[imp, T]
         - psi_dem[imp, T]
-        - mu_rps[imp, T]
         == z
     )
 
@@ -566,12 +559,6 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
         eq_comp_psi_dem[imp, T] = psi_dem[imp, T] * x_dem[imp, T] == z
     else:
         eq_comp_psi_dem[imp, T] = psi_dem[imp, T] * x_dem[imp, T] <= eps_value
-
-    eq_comp_mu_rps = Equation(m, "eq_comp_mu_rps", domain=[imp, T])
-    if eps_comp == 0.0:
-        eq_comp_mu_rps[imp, T] = mu_rps[imp, T] * (x_dem[imp, T] - target_ratio_p * Dmax_t_p[imp, T]) == z
-    else:
-        eq_comp_mu_rps[imp, T] = mu_rps[imp, T] * (x_dem[imp, T] - target_ratio_p * Dmax_t_p[imp, T]) <= eps_value
 
     # =====================================================================
     # Step 5 — Capacity transitions + offer linkage + rate limits
@@ -655,9 +642,7 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
         "eq_comp_gamma": eq_comp_gamma,
         "eq_comp_beta_dem": eq_comp_beta_dem,
         "eq_comp_psi_dem": eq_comp_psi_dem,
-        "eq_comp_mu_rps": eq_comp_mu_rps,
         "eq_obj_llp": eq_obj_llp,
-        "eq_rps_target": eq_rps_target,
         "eq_cap_trans_30": eq_cap_trans_30,
         "eq_cap_trans_35": eq_cap_trans_35,
         "eq_cap_trans_40": eq_cap_trans_40,
@@ -833,7 +818,6 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
             "c_man_var": c_man_var,
             "beta_dem": beta_dem,
             "psi_dem": psi_dem,
-            "mu_rps": mu_rps,
         },
         equations=equations,
         models=models,
@@ -997,7 +981,6 @@ def extract_state(
         "gamma": _maybe_var("gamma"),
         "beta_dem": _maybe_var("beta_dem"),
         "psi_dem": _maybe_var("psi_dem"),
-        "mu_rps": _maybe_var("mu_rps"),
         "W_cum": _maybe_var("W_cum"),
         "c_man_var": _maybe_var("c_man_var"),
         "obj": obj_values,

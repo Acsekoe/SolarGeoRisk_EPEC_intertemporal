@@ -59,11 +59,16 @@ def solve_gs_intertemporal(
             (r, tp): float(initial_state.get("k_dec", {}).get((r, tp), 0.0))
             for r in data.players for tp in times
         }
+        theta_a_bid: Dict[Tuple[str, str], float] = {
+            (r, tp): float(initial_state.get("a_bid", {}).get((r, tp), data.a_dem_t[(r, tp)] if data.a_dem_t else data.a_dem.get(r, 0.0)))
+            for r in data.players for tp in times
+        }
     else:
         theta_Q = {(r, tp): 0.8 * float(kcap_2025[r]) for r in data.players for tp in times}
         theta_p_offer = {(ex, im, tp): 0.5 * float(data.p_offer_ub[(ex, im)]) for ex in data.regions for im in data.regions for tp in times}
         theta_k_exp = {(r, tp): 0.0 for r in data.players for tp in times}
         theta_k_dec = {(r, tp): 0.0 for r in data.players for tp in times}
+        theta_a_bid = {(r, tp): float(data.a_dem_t[(r, tp)] if data.a_dem_t else data.a_dem.get(r, 0.0)) for r in data.players for tp in times}
 
     theta_obj: Dict[str, float] = {r: 0.0 for r in data.players}
 
@@ -104,6 +109,7 @@ def solve_gs_intertemporal(
         prev_poffer = dict(theta_p_offer)
         prev_k_exp = dict(theta_k_exp)
         prev_k_dec = dict(theta_k_dec)
+        prev_a_bid = dict(theta_a_bid)
         prev_obj = dict(theta_obj)
 
         sweep_order = list(data.players)
@@ -121,6 +127,7 @@ def solve_gs_intertemporal(
                 ctx, data,
                 theta_Q, theta_p_offer,
                 theta_k_exp, theta_k_dec,
+                theta_a_bid,
                 player=p,
             )
             ctx.models[p].solve(**solve_kwargs)
@@ -132,6 +139,7 @@ def solve_gs_intertemporal(
             poffer_sol = state.get("p_offer", {})
             k_exp_sol = state.get("k_exp", {})
             k_dec_sol = state.get("k_dec", {})
+            a_bid_sol = state.get("a_bid", {})
             obj_sol = state.get("obj", {})
 
             # Update Q_offer
@@ -149,13 +157,15 @@ def solve_gs_intertemporal(
                         br = float(poffer_sol[key])
                         theta_p_offer[key] = (1.0 - omega) * theta_p_offer[key] + omega * br
 
-            # Update capacity decisions
+            # Update capacity decisions and a_bid
             for tp in times:
                 sk = (p, tp)
                 if sk in k_exp_sol:
                     theta_k_exp[sk] = (1.0 - omega) * theta_k_exp[sk] + omega * float(k_exp_sol[sk])
                 if sk in k_dec_sol:
                     theta_k_dec[sk] = (1.0 - omega) * theta_k_dec[sk] + omega * float(k_dec_sol[sk])
+                if sk in a_bid_sol:
+                    theta_a_bid[sk] = (1.0 - omega) * theta_a_bid[sk] + omega * float(a_bid_sol[sk])
 
             if isinstance(obj_sol, dict):
                 theta_obj[p] = float(obj_sol.get(p, 0.0))
@@ -164,6 +174,10 @@ def solve_gs_intertemporal(
         for r in data.players:
             for tp in times:
                 r_strat = max(r_strat, _scaled_change(theta_Q[(r, tp)], prev_Q[(r, tp)], _q_scale(r)))
+                
+                # Compare a_bid change scaled by a_true
+                a_scale = float(data.a_dem_t[(r, tp)] if data.a_dem_t else data.a_dem.get(r, 100.0))
+                r_strat = max(r_strat, _scaled_change(theta_a_bid[(r, tp)], prev_a_bid[(r, tp)], a_scale))
                 # Optionally add k_exp, k_dec to convergence metric
 
         for ex in data.regions:

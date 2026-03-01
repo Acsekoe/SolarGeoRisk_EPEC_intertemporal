@@ -148,7 +148,6 @@ def _print_state_summary(*, data: ModelData, regions: list[str], state: dict[str
             i_val = _safe_float(state.get("k_exp", {}).get((r, t), 0.0))
             d_val = _safe_float(state.get("k_dec", {}).get((r, t), 0.0))
             l_val = _safe_float(lam.get((r, t), 0.0))
-            mu_rps_val = _safe_float(state.get("mu_rps", {}).get((r, t), 0.0))
             
             x_dem_val = _safe_float(state.get("x_dem", {}).get((r, t), 0.0))
             a_true = float(data.a_dem_t.get((r, t), 0.0)) if data.a_dem_t else float(data.a_dem.get(r, 0.0))
@@ -166,7 +165,7 @@ def _print_state_summary(*, data: ModelData, regions: list[str], state: dict[str
             max_p = max([_safe_float(v) for k, v in p_offer_map.items() 
                           if isinstance(k, tuple) and len(k) == 3 and k[0] == r and k[2] == t], default=0.0)
             
-            print(f"  {r:<4} {t:<4} D={x_dem_val:<6.1f} a_bid={a_bid_val:<6.1f} mu_rps={mu_rps_val:<5.1f} | Q={q_val:<7.1f} K={k_val:<7.1f} I={i_val:<5.1f} D={d_val:<5.1f} lam={l_val:<6.1f} poffer={max_p:<6.1f} | c={c_man_val:<6.1f}")
+            print(f"  {r:<4} {t:<4} D={x_dem_val:<6.1f} a_bid={a_bid_val:<6.1f} | Q={q_val:<7.1f} K={k_val:<7.1f} I={i_val:<5.1f} D={d_val:<5.1f} lam={l_val:<6.1f} poffer={max_p:<6.1f} | c={c_man_val:<6.1f}")
 
 
 def _gams_workdir(run_id: str, configured_workdir: str | None) -> str:
@@ -305,7 +304,6 @@ def _append_detailed_iter_rows(
     w_cum_map = state.get("W_cum", {})
     a_bid_map = state.get("a_bid", {})
     c_man_var_map = state.get("c_man_var", {})
-    mu_rps_map = state.get("mu_rps", {})
     
     for r in data.regions:
         for t in times:
@@ -323,7 +321,6 @@ def _append_detailed_iter_rows(
                 "mu": _safe_float(mu_map.get((r, t))),
                 "beta_dem": _safe_float(beta_dem_map.get((r, t))),
                 "psi_dem": _safe_float(psi_dem_map.get((r, t))),
-                "mu_rps": _safe_float(mu_rps_map.get((r, t))),
                 "W_cum": _safe_float(w_cum_map.get((r, t))),
                 "a_bid": _safe_float(a_bid_map.get((r, t), data.a_dem_t.get((r, t)) if data.a_dem_t else data.a_dem.get(r))),
                 "c_man_var": max(max(50.0, data.c_man.get(r, 0.0) * 0.5), data.c_man.get(r, 0.0) - 0.022 * _safe_float(w_cum_map.get((r, t)))),
