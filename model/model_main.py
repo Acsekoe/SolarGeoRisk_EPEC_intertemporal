@@ -710,8 +710,8 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
             pen_q_quad = Sum(
                 T,
                 -gp.Number(0.5) * ytn_p[T] * kappa_Q[r] * (
-                    (Q_offer[r, T] - Sum(j, x[r, j, T]))
-                    * (Q_offer[r, T] - Sum(j, x[r, j, T]))
+                    (Kcap[r, T] - Q_offer[r, T])
+                    * (Kcap[r, T] - Q_offer[r, T])
                 ),
             )
 
@@ -722,7 +722,7 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
         )
         pen_q_lin = Sum(
             T,
-            -ytn_p[T] * kappa_Q[r] * Q_offer[r, T],
+            -ytn_p[T] * kappa_Q[r] * (Kcap[r, T] - Q_offer[r, T]),
         )
 
         # Proximal regularization

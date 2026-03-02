@@ -68,7 +68,7 @@ class RunConfig:
     knitro_algorithm: int | None = None
 
     # Scalers
-    kappa_q: float | None = 0.00
+    kappa_q: float | None = 0.1
     rho_prox: float | None = 0.00
     use_quad: bool = True
 

@@ -136,8 +136,7 @@ def load_data_from_excel(path: str) -> ModelData:
     except ValueError as exc:
         raise ValueError("Missing required sheet: params_region") from exc
 
-    df_params.columns = [str(c).strip() for c in df_params.columns]
-    _require_columns(df_params, ["r", "Qcap_exist (GW)", "c_man (USD/kW)", "a_dem (USD/kW)", "b_dem (USD/kW)"], "params_region")
+    _require_columns(df_params, ["r", "Qcap_exist (GW)", "c_man (USD/kW)"], "params_region")
 
     d_col = next((c for c in ["D", "D (GW)"] if c in df_params.columns), None)
     dmax_col = next((c for c in ["Dmax", "Dmax (GW)", "Dmax_2025 (GW)", "Dmax_2025(GW)", "Dmax_2025"] if c in df_params.columns), None)
@@ -190,16 +189,11 @@ def load_data_from_excel(path: str) -> ModelData:
             d_f = float(d_v)
         else:
             d_f = dmax_f
-        if d_f <= 0.0:
-            raise ValueError(f"Column 'D' must be > 0 for region '{r}'. Got: {d_f}")
-        a_v = row["a_dem (USD/kW)"]
-        b_v = row["b_dem (USD/kW)"]
+        # a_dem and b_dem base columns are removed
+        a_v = row.get("a_dem (USD/kW)", row.get("a_dem"))
+        b_v = row.get("b_dem (USD/kW)", row.get("b_dem"))
         a_f = float(a_v) if not pd.isna(a_v) else float("nan")
         b_f = float(b_v) if not pd.isna(b_v) else float("nan")
-        if not pd.isna(a_f) and a_f <= 0.0:
-            raise ValueError(f"Column 'a_dem (USD/kW)' must be > 0 for region '{r}'. Got: {a_f}")
-        if not pd.isna(b_f) and b_f <= 0.0:
-            raise ValueError(f"Column 'b_dem (USD/kW)' must be > 0 for region '{r}'. Got: {b_f}")
         a_dem[r] = a_f
         b_dem[r] = b_f
 
