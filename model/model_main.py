@@ -10,6 +10,7 @@ from __future__ import annotations
 INTERTEMPORAL_IMPLEMENTED = True
 
 import math
+import warnings
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set as PySet, Tuple
 
@@ -160,6 +161,175 @@ def _sanity_check_data(data: ModelData) -> None:
         raise ValueError(f"All kappa_Q must be >= 0. Invalid regions: {bad_kappa}")
 
 
+def _true_demand_intercept(data: ModelData, region: str, tp: str) -> float:
+    if data.a_dem_t is not None:
+        return float(data.a_dem_t[(region, tp)])
+    return float(data.a_dem.get(region, 0.0))
+
+
+def _initial_capacity_by_region(data: ModelData) -> Dict[str, float]:
+    cap_source = data.Kcap_2025 if data.Kcap_2025 is not None else data.Qcap
+    return {
+        r: float(cap_source.get(r, data.Qcap.get(r, 0.0)))
+        for r in data.regions
+    }
+
+
+def _initial_capacity_path(
+    data: ModelData,
+    times: List[str],
+) -> Dict[Tuple[str, str], float]:
+    kcap_init = _initial_capacity_by_region(data)
+    return {(r, tp): kcap_init[r] for r in data.regions for tp in times}
+
+
+def _transition_pairs(times: List[str]) -> List[Tuple[str, str]]:
+    return list(zip(times[:-1], times[1:]))
+
+
+def _move_times(times: List[str]) -> List[str]:
+    return times[:-1]
+
+
+def _non_strategic_regions(data: ModelData) -> PySet[str]:
+    return set(data.non_strategic) | (set(data.regions) - set(data.players))
+
+
+def _fix_a_bid_to_true_dem(data: ModelData) -> bool:
+    settings = data.settings or {}
+    return bool(settings.get("fix_a_bid_to_true_dem", False))
+
+
+def _implied_capacity_path(
+    data: ModelData,
+    times: List[str],
+    theta_dK_net: Dict[Tuple[str, str], float] | None = None,
+) -> Dict[Tuple[str, str], float]:
+    """Recover the endogenous Kcap path implied by Kcap_init and net changes."""
+    kcap_init = _initial_capacity_by_region(data)
+    ytn = data.years_to_next or _DEFAULT_YTN
+    move_times = _move_times(times)
+    out: Dict[Tuple[str, str], float] = {}
+    for r in data.regions:
+        out[(r, times[0])] = float(kcap_init[r])
+        for tp, tp_next in _transition_pairs(times):
+            d_val = 0.0
+            if theta_dK_net is not None:
+                d_val = float(theta_dK_net.get((r, tp), 0.0))
+            out[(r, tp_next)] = out[(r, tp)] + float(ytn.get(tp, _DEFAULT_YTN.get(tp, 1.0))) * d_val
+        for tp in move_times:
+            out.setdefault((r, tp), float(kcap_init[r]))
+    return out
+
+
+def _clip_value(value: float, lo: float, up: float) -> float:
+    return max(lo, min(value, up))
+
+
+def _warn_model_structure(data: ModelData, times: List[str]) -> None:
+    """Surface data/model inconsistencies without changing the intended game."""
+    for r in data.regions:
+        c_floor = max(50.0, float(data.c_man.get(r, 0.0)) * 0.5)
+        domestic_ub = float(data.p_offer_ub.get((r, r), 0.0))
+        if domestic_ub + 1e-9 < c_floor:
+            warnings.warn(
+                (
+                    f"Domestic p_offer_ub[{r},{r}]={domestic_ub:.6g} is below "
+                    f"c_man_floor={c_floor:.6g}; the self-offer equality may be infeasible."
+                ),
+                stacklevel=2,
+            )
+
+    for ex in _non_strategic_regions(data):
+        benchmark = float(data.c_man.get(ex, 0.0))
+        for im in data.regions:
+            if ex == im:
+                continue
+            ub = float(data.p_offer_ub.get((ex, im), 0.0))
+            if benchmark > ub + 1e-9:
+                warnings.warn(
+                    (
+                        f"Non-strategic offer benchmark {benchmark:.6g} for route "
+                        f"({ex},{im}) exceeds p_offer_ub={ub:.6g}; fixings will clip to the upper bound."
+                    ),
+                    stacklevel=2,
+                )
+
+    # Keep a guard here so future edits do not silently revert the follower
+    # back to true demand while eq_stat_dem still uses a_bid.
+    llp_objective_demand_symbol = "a_bid"
+    llp_stationarity_demand_symbol = "a_bid"
+    if llp_objective_demand_symbol != llp_stationarity_demand_symbol:
+        warnings.warn(
+            "LLP objective/stationarity mismatch detected: eq_obj_llp must use a_bid whenever eq_stat_dem uses a_bid.",
+            stacklevel=2,
+        )
+
+
+def validate_strategy_inputs(
+    data: ModelData,
+    theta_Q: Dict[Tuple[str, str], float],
+    theta_a_bid: Dict[Tuple[str, str], float] | None = None,
+    theta_dK_net: Dict[Tuple[str, str], float] | None = None,
+) -> None:
+    """Warn when iterates exceed the feasible intertemporal strategy space."""
+    times = data.times or list(_DEFAULT_TIMES)
+    move_times = _move_times(times)
+    transition_pairs = _transition_pairs(times)
+    kcap_init = _initial_capacity_by_region(data)
+    implied_kcap = _implied_capacity_path(data, times, theta_dK_net)
+    for key, q_val in theta_Q.items():
+        cap = float(implied_kcap.get(key, 0.0))
+        if float(q_val) > cap + 1e-9:
+            warnings.warn(
+                (
+                    f"theta_Q{key}={float(q_val):.6g} exceeds implied Kcap={cap:.6g}; "
+                    f"apply_player_fixings will clip it."
+                ),
+                stacklevel=2,
+            )
+
+    if theta_a_bid is None:
+        theta_a_bid = {}
+
+    for (r, tp), a_val in theta_a_bid.items():
+        a_true = _true_demand_intercept(data, r, tp)
+        if float(a_val) < -1e-9 or float(a_val) > a_true + 1e-9:
+            warnings.warn(
+                (
+                    f"theta_a_bid[{r},{tp}]={float(a_val):.6g} lies outside [0, {a_true:.6g}]; "
+                    f"apply_player_fixings will clip it."
+                ),
+                stacklevel=2,
+            )
+
+    if theta_dK_net is not None:
+        for r in data.players:
+            for tp in move_times:
+                d_val = float(theta_dK_net.get((r, tp), 0.0))
+                k_val = max(float(implied_kcap.get((r, tp), kcap_init[r])), 0.0)
+                exp_lim = float((data.g_exp_ub or {}).get(r, 0.1)) * k_val
+                dec_lim = float((data.g_dec_ub or {}).get(r, 0.1)) * k_val
+                if d_val > exp_lim + 1e-9:
+                    warnings.warn(
+                        f"theta_dK_net[{r},{tp}]={d_val:.6g} exceeds expansion limit {exp_lim:.6g}.",
+                        stacklevel=2,
+                    )
+                if -d_val > dec_lim + 1e-9:
+                    warnings.warn(
+                        f"theta_dK_net[{r},{tp}]={d_val:.6g} is below the decommissioning lower bound {-dec_lim:.6g}.",
+                        stacklevel=2,
+                    )
+
+            for tp in times:
+                k_val = float(implied_kcap.get((r, tp), 0.0))
+                if k_val < -1e-9:
+                    warnings.warn(
+                        f"Implied Kcap[{r},{tp}]={k_val:.6g} is negative under theta_dK_net.",
+                        stacklevel=2,
+                    )
+
+
 # =============================================================================
 # Step 2–8: build_model
 # =============================================================================
@@ -192,6 +362,8 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
 
     times = data.times or list(_DEFAULT_TIMES)
     T = Set(m, "T", records=times)
+    _warn_model_structure(data, times)
+    transition_pairs = _transition_pairs(times)
     # Note: do NOT create Alias(m, "t", T) — 't' is a GAMS built-in symbol.
 
     # =====================================================================
@@ -367,12 +539,10 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
         records=[(k, kappa_by_r[k]) for k in data.regions],
     )
 
-    # Proximal reference params [R, T] and [imp, exp, T]
-    Q_offer_last = Parameter(m, "Q_offer_last", domain=[R, T])
+    # Proximal reference params [imp, exp, T]
     p_offer_last = Parameter(m, "p_offer_last", domain=[exp, imp, T])
 
     # Initialize proximal references
-    Q_offer_last[R, T] = Kcap_init_p[R]
     p_offer_last[exp, imp, T] = z
 
     # lam upper bound for variable bounding (use max p_offer_ub)
@@ -423,19 +593,23 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
     # =====================================================================
 
     # -- ULP strategic variables --
+    Kcap = Variable(m, "Kcap", domain=[R, T], type=VariableType.POSITIVE)
+    dK_net = Variable(m, "dK_net", domain=[R, T], type=VariableType.FREE)
+    Icap_pos = Variable(m, "Icap_pos", domain=[R, T], type=VariableType.POSITIVE)
     Q_offer = Variable(m, "Q_offer", domain=[R, T], type=VariableType.POSITIVE)
     p_offer = Variable(m, "p_offer", domain=[exp, imp, T], type=VariableType.POSITIVE)
     a_bid = Variable(m, "a_bid", domain=[R, T], type=VariableType.POSITIVE)
-    
-    # Capacity variables
-    Kcap = Variable(m, "Kcap", domain=[R, T], type=VariableType.POSITIVE)
-    k_exp = Variable(m, "k_exp", domain=[R, T], type=VariableType.POSITIVE)
-    k_dec = Variable(m, "k_dec", domain=[R, T], type=VariableType.POSITIVE)
+
+    # Terminal controls are fixed to zero to avoid end-of-horizon junk decisions.
+    dK_net.fx[R, times[-1]] = 0.0
+    Icap_pos.fx[R, times[-1]] = 0.0
 
     # Link p_offer up bound
     p_offer.up[exp, imp, T] = p_offer_ub_p[exp, imp]
-    
-    # Restrict a_bid to not exceed true demand intercept
+
+    # a_bid is the declared demand intercept seen by the LLP/KKT. Strategic
+    # regions may understate willingness-to-pay here intentionally.
+    # a_dem_t remains the true demand intercept used in upper-level welfare.
     a_bid.up[R, T] = a_dem_t_p[R, T]
 
     # -- Learning-By-Doing Variables --
@@ -445,15 +619,9 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
     # Establish strict variable lower bound for cost floor
     c_man_var.lo[R, T] = c_man_floor_p[R]
 
-    # Pre-fix Kcap initially and lock end-period expansion
+    # Initialize cumulative volume at 0 for the first period
     for r in data.regions:
-        Kcap.fx[r, times[0]] = kcap_2025_dict[r]
-        # Initialize cumulative volume at 0 for the first period
         W_cum.fx[r, times[0]] = 0.0
-        
-        # No investment or decommission in 2040 (terminal)
-        k_exp.fx[r, times[-1]] = 0.0
-        k_dec.fx[r, times[-1]] = 0.0
 
     # -- LLP market variables --
     z_llp = Variable(m, "z_llp", type=VariableType.FREE)
@@ -480,9 +648,11 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
     # =====================================================================
 
     # --- Primal LLP Objective (not directly used in MPEC solve but kept for reporting) ---
+    # The follower clears on declared demand. This is the intentional
+    # strategic demand-misreporting channel and must stay aligned with eq_stat_dem.
     llp_gross_surplus = Sum(
         [R, T],
-        a_dem_t_p[R, T] * x_dem[R, T]
+        a_bid[R, T] * x_dem[R, T]
         - (b_dem_t_p[R, T] / gp.Number(2.0)) * x_dem[R, T] * x_dem[R, T],
     )
 
@@ -506,6 +676,9 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
 
     eq_cap = Equation(m, "eq_cap", domain=[exp, T])
     eq_cap[exp, T] = Q_offer[exp, T] - Sum(imp, x[exp, imp, T]) >= z
+
+    eq_q_offer_cap = Equation(m, "eq_q_offer_cap", domain=[R, T])
+    eq_q_offer_cap[R, T] = Q_offer[R, T] <= Kcap[R, T]
 
     # --- Stationarity (KKT) ---
     eq_stat_x = Equation(m, "eq_stat_x", domain=[exp, imp, T])
@@ -564,44 +737,33 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
     # Step 5 — Capacity transitions + offer linkage + rate limits
     # =====================================================================
 
-    # 3 hard-coded transition equations
-    eq_cap_trans_30 = Equation(m, "eq_cap_trans_30", domain=[R])
-    eq_cap_trans_30[R] = (
-        Kcap[R, "2030"] == Kcap[R, "2025"] + k_exp[R, "2025"] - k_dec[R, "2025"]
-    )
+    eq_kcap_init = Equation(m, "eq_kcap_init", domain=[R])
+    eq_kcap_init[R] = Kcap[R, times[0]] == Kcap_init_p[R]
 
-    eq_cap_trans_35 = Equation(m, "eq_cap_trans_35", domain=[R])
-    eq_cap_trans_35[R] = (
-        Kcap[R, "2035"] == Kcap[R, "2030"] + k_exp[R, "2030"] - k_dec[R, "2030"]
-    )
+    eq_kcap_transitions: Dict[str, Equation] = {}
+    eq_dk_exp_bounds: Dict[str, Equation] = {}
+    eq_dk_dec_bounds: Dict[str, Equation] = {}
+    eq_icap_pos_lb: Dict[str, Equation] = {}
+    for tp, tp_next in transition_pairs:
+        eq_kcap_trans = Equation(m, f"eq_kcap_trans_{tp_next}", domain=[R])
+        eq_kcap_trans[R] = Kcap[R, tp_next] == Kcap[R, tp] + ytn_p[tp] * dK_net[R, tp]
+        eq_kcap_transitions[tp_next] = eq_kcap_trans
 
-    eq_cap_trans_40 = Equation(m, "eq_cap_trans_40", domain=[R])
-    eq_cap_trans_40[R] = (
-        Kcap[R, "2040"] == Kcap[R, "2035"] + k_exp[R, "2035"] - k_dec[R, "2035"]
-    )
+        eq_dk_exp = Equation(m, f"eq_dk_exp_{tp}", domain=[R])
+        eq_dk_exp[R] = dK_net[R, tp] <= g_exp_p[R] * Kcap[R, tp]
+        eq_dk_exp_bounds[tp] = eq_dk_exp
 
-    # Offer linkage: Q_offer <= Kcap (explicit constraint)
-    eq_offer_cap = Equation(m, "eq_offer_cap", domain=[R, T])
-    eq_offer_cap[R, T] = Q_offer[R, T] <= Kcap[R, T]
+        eq_dk_dec = Equation(m, f"eq_dk_dec_{tp}", domain=[R])
+        eq_dk_dec[R] = -dK_net[R, tp] <= g_dec_p[R] * Kcap[R, tp]
+        eq_dk_dec_bounds[tp] = eq_dk_dec
+
+        eq_icap_lb = Equation(m, f"eq_icap_pos_lb_{tp}", domain=[R])
+        eq_icap_lb[R] = Icap_pos[R, tp] >= dK_net[R, tp]
+        eq_icap_pos_lb[tp] = eq_icap_lb
 
     # Pin domestic self-offer to domestic manufacturing cost
     eq_self_offer = Equation(m, "eq_self_offer", domain=[R, T])
     eq_self_offer[R, T] = p_offer[R, R, T] == c_man_var[R, T]
-
-    # Expansion rate limit: k_exp <= g_exp * y_t * K_cap
-    eq_exp_limit = Equation(m, "eq_exp_limit", domain=[R, T])
-    eq_exp_limit[R, T] = k_exp[R, T] <= g_exp_p[R] * ytn_p[T] * Kcap[R, T]
-
-    # Decommissioning rate limit: k_dec <= g_dec * y_t * K_cap
-    eq_dec_limit = Equation(m, "eq_dec_limit", domain=[R, T])
-    eq_dec_limit[R, T] = k_dec[R, T] <= g_dec_p[R] * ytn_p[T] * Kcap[R, T]
-
-    # Prevent simultaneous expansion and decommissioning (k_exp * k_dec = 0)
-    eq_comp_exp_dec = Equation(m, "eq_comp_exp_dec", domain=[R, T])
-    if eps_comp == 0.0:
-        eq_comp_exp_dec[R, T] = k_exp[R, T] * k_dec[R, T] == z
-    else:
-        eq_comp_exp_dec[R, T] = k_exp[R, T] * k_dec[R, T] <= eps_value
 
     # --- Learning-By-Doing (LBD) Equations ---
     
@@ -627,15 +789,13 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
         c_man_var[R, T] >= c_man_base_p[R] - (theta_lbd_p[R] * W_cum[R, T])
     )
 
-    # Pin domestic offer price to marginal manufacturing cost
-    eq_p_offer_self = Equation(m, "eq_p_offer_self", domain=[R, T])
-    eq_p_offer_self[R, T] = p_offer[R, R, T] == c_man_var[R, T]
     # =====================================================================
     # Collect equations
     # =====================================================================
     equations = {
         "eq_bal": eq_bal,
         "eq_cap": eq_cap,
+        "eq_q_offer_cap": eq_q_offer_cap,
         "eq_stat_x": eq_stat_x,
         "eq_stat_dem": eq_stat_dem,
         "eq_comp_mu": eq_comp_mu,
@@ -643,20 +803,17 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
         "eq_comp_beta_dem": eq_comp_beta_dem,
         "eq_comp_psi_dem": eq_comp_psi_dem,
         "eq_obj_llp": eq_obj_llp,
-        "eq_cap_trans_30": eq_cap_trans_30,
-        "eq_cap_trans_35": eq_cap_trans_35,
-        "eq_cap_trans_40": eq_cap_trans_40,
-        "eq_offer_cap": eq_offer_cap,
+        "eq_kcap_init": eq_kcap_init,
         "eq_self_offer": eq_self_offer,
-        "eq_exp_limit": eq_exp_limit,
-        "eq_dec_limit": eq_dec_limit,
-        "eq_comp_exp_dec": eq_comp_exp_dec,
         "eq_w_trans_30": eq_w_trans_30,
         "eq_w_trans_35": eq_w_trans_35,
         "eq_w_trans_40": eq_w_trans_40,
         "eq_c_man_curve": eq_c_man_curve,
-        "eq_p_offer_self": eq_p_offer_self,
     }
+    equations.update({f"eq_kcap_trans_{tp_next}": eq for tp_next, eq in eq_kcap_transitions.items()})
+    equations.update({f"eq_dk_exp_{tp}": eq for tp, eq in eq_dk_exp_bounds.items()})
+    equations.update({f"eq_dk_dec_{tp}": eq for tp, eq in eq_dk_dec_bounds.items()})
+    equations.update({f"eq_icap_pos_lb_{tp}": eq for tp, eq in eq_icap_pos_lb.items()})
 
     # =====================================================================
     # Step 6 — Objective = sum over time
@@ -667,7 +824,8 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
 
         # ---- Per-period welfare components (summed over T) ----
 
-        # U_rt(d) - lam_r * d_r
+        # Upper-level welfare stays on true demand. The difference versus a_bid
+        # is the intentional strategic misreporting channel.
         d_surplus_t = Sum(
             T,
             beta_p[T] * ytn_p[T] * (
@@ -687,32 +845,20 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
             ) * x[r, j, T],
         )
 
-        # Holding cost
-        hold_cost_t = Sum(
+        capacity_cost_t = Sum(
             T,
-            beta_p[T] * f_hold_p[r] * ytn_p[T] * Kcap[r, T],
-        )
-
-        # Investment cost
-        inv_cost_t = Sum(
-            T,
-            beta_p[T] * c_inv_p[r] * ytn_p[T] * k_exp[r, T],
+            -beta_p[T] * ytn_p[T] * (
+                f_hold_p[r] * Kcap[r, T]
+                + c_inv_p[r] * Icap_pos[r, T]
+            ),
         )
 
         # ---- Penalties (replicated per period) ----
         pen_p_offer_quad = z
-        pen_q_quad = z
         if use_quad:
             pen_p_offer_quad = Sum(
                 T,
                 -gp.Number(0.5) * ytn_p[T] * rho_p_p[r] * Sum(j, p_offer[r, j, T] * p_offer[r, j, T]),
-            )
-            pen_q_quad = Sum(
-                T,
-                -gp.Number(0.5) * ytn_p[T] * kappa_Q[r] * (
-                    (Kcap[r, T] - Q_offer[r, T])
-                    * (Kcap[r, T] - Q_offer[r, T])
-                ),
             )
 
         # Linear penalties
@@ -720,19 +866,8 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
             T,
             -ytn_p[T] * rho_p_p[r] * Sum(j, p_offer[r, j, T]),
         )
-        pen_q_lin = Sum(
-            T,
-            -ytn_p[T] * kappa_Q[r] * (Kcap[r, T] - Q_offer[r, T]),
-        )
 
         # Proximal regularization
-        pen_prox_q = Sum(
-            T,
-            -gp.Number(0.5) * ytn_p[T] * rho_prox * (
-                (Q_offer[r, T] - Q_offer_last[r, T])
-                * (Q_offer[r, T] - Q_offer_last[r, T])
-            ),
-        )
         pen_prox_poffer = Sum(
             T,
             -gp.Number(0.5) * ytn_p[T] * rho_prox * Sum(
@@ -747,22 +882,16 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
             obj_welfare = (
                 d_surplus_t
                 + producer_term_t
-                - hold_cost_t
-                - inv_cost_t
+                + capacity_cost_t
                 + pen_p_offer_quad
-                + pen_q_quad
-                + pen_prox_q
                 + pen_prox_poffer
             )
         else:
             obj_welfare = (
                 d_surplus_t
                 + producer_term_t
-                - hold_cost_t
-                - inv_cost_t
+                + capacity_cost_t
                 + pen_p_offer_lin
-                + pen_q_lin
-                + pen_prox_q
                 + pen_prox_poffer
             )
 
@@ -799,16 +928,15 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
             "c_inv": c_inv_p,
             "beta_t": beta_p,
             "ytn": ytn_p,
-            "Q_offer_last": Q_offer_last,
             "p_offer_last": p_offer_last,
         },
         vars={
+            "Kcap": Kcap,
+            "dK_net": dK_net,
+            "Icap_pos": Icap_pos,
             "Q_offer": Q_offer,
             "p_offer": p_offer,
             "a_bid": a_bid,
-            "Kcap": Kcap,
-            "k_exp": k_exp,
-            "k_dec": k_dec,
             "x": x,
             "x_dem": x_dem,
             "lam": lam_var,
@@ -831,114 +959,105 @@ def apply_player_fixings(
     ctx: ModelContext,
     data: ModelData,
     theta_Q: Dict[Tuple[str, str], float],
+    theta_dK_net: Dict[Tuple[str, str], float],
     theta_p_offer: Dict[Tuple[str, str, str], float],
-    theta_k_exp: Dict[Tuple[str, str], float],
-    theta_k_dec: Dict[Tuple[str, str], float],
     theta_a_bid: Dict[Tuple[str, str], float],
     *,
     player: str,
 ) -> None:
     """Fix all other players' strategies; free current player's strategies."""
     times = data.times or list(_DEFAULT_TIMES)
-    kcap_2025_dict = data.Kcap_2025 if data.Kcap_2025 is not None else {r: float(data.Qcap.get(r, 0.0)) for r in data.regions}
+    move_times = _move_times(times)
+    final_t = times[-1]
+    implied_kcap = _implied_capacity_path(data, times, theta_dK_net)
+    non_strategic_regions = _non_strategic_regions(data)
+    fix_a_bid = _fix_a_bid_to_true_dem(data)
 
+    Kcap = ctx.vars["Kcap"]
+    dK_net = ctx.vars["dK_net"]
+    Icap_pos = ctx.vars["Icap_pos"]
     Q_offer = ctx.vars["Q_offer"]
     p_offer = ctx.vars["p_offer"]
     a_bid = ctx.vars["a_bid"]
-    Kcap = ctx.vars["Kcap"]
-    k_exp = ctx.vars["k_exp"]
-    k_dec = ctx.vars["k_dec"]
 
     for r in data.regions:
         for tp in times:
+            a_true = _true_demand_intercept(data, r, tp)
+            Kcap.lo[r, tp] = 0.0
+            Kcap.up[r, tp] = float("inf")
+            Icap_pos.lo[r, tp] = 0.0
+            Icap_pos.up[r, tp] = 0.0 if tp == final_t else float("inf")
             if r == player:
-                # Free current player's strategies
-                # Q_offer bounded by Kcap (via eq_offer_cap constraint)
+                # Active player controls the net capacity-change path. Kcap is
+                # implied by the stock equations and Q_offer is bounded by Kcap.
+                if tp in move_times:
+                    dK_net.lo[r, tp] = float("-inf")
+                    dK_net.up[r, tp] = float("inf")
+                else:
+                    dK_net.lo[r, tp] = 0.0
+                    dK_net.up[r, tp] = 0.0
                 Q_offer.lo[r, tp] = 0.0
-                Q_offer.up[r, tp] = float("inf")  # constraint handles upper bound
+                Q_offer.up[r, tp] = float("inf")
 
-                # Free capacity decisions
-                if tp == times[0]:
-                    # Kcap fixed at initial
-                    Kcap.lo[r, tp] = float(kcap_2025_dict[r])
-                    Kcap.up[r, tp] = float(kcap_2025_dict[r])
+                if fix_a_bid:
+                    a_bid.lo[r, tp] = a_true
+                    a_bid.up[r, tp] = a_true
                 else:
-                    Kcap.lo[r, tp] = 0.0
-                    Kcap.up[r, tp] = float("inf")
-
-                if tp == times[-1]:
-                    k_exp.lo[r, tp] = 0.0
-                    k_exp.up[r, tp] = 0.0
-                    k_dec.lo[r, tp] = 0.0
-                    k_dec.up[r, tp] = 0.0
-                else:
-                    k_exp.lo[r, tp] = 0.0
-                    k_exp.up[r, tp] = float("inf") # Bound managed by eq_exp_limit
-                    k_dec.lo[r, tp] = 0.0
-                    k_dec.up[r, tp] = float("inf") # Bound managed by eq_dec_limit
-                
-                # a_bid freed for current player's own region
-                a_bid.lo[r, tp] = 0.0
-                a_bid.up[r, tp] = float(data.a_dem_t[(r, tp)] if data.a_dem_t else data.a_dem.get(r, 0.0))
+                    # Active player's declared demand remains a strategic variable.
+                    a_bid.lo[r, tp] = 0.0
+                    a_bid.up[r, tp] = a_true
 
             elif r in data.players:
-                # Fix other strategic player
-                q_val = float(theta_Q.get((r, tp), float(kcap_2025_dict.get(r, 0.0))))
+                # Other strategic players are fixed at the current Gauss-Seidel iterate.
+                if tp in move_times:
+                    d_val = float(theta_dK_net.get((r, tp), 0.0))
+                    dK_net.lo[r, tp] = d_val
+                    dK_net.up[r, tp] = d_val
+                    Icap_pos.lo[r, tp] = max(d_val, 0.0)
+                    Icap_pos.up[r, tp] = max(d_val, 0.0)
+                else:
+                    dK_net.lo[r, tp] = 0.0
+                    dK_net.up[r, tp] = 0.0
+                q_val = _clip_value(float(theta_Q.get((r, tp), 0.0)), 0.0, max(float(implied_kcap.get((r, tp), 0.0)), 0.0))
                 Q_offer.lo[r, tp] = q_val
                 Q_offer.up[r, tp] = q_val
 
-                i_val = float(theta_k_exp.get((r, tp), 0.0))
-                k_exp.lo[r, tp] = i_val
-                k_exp.up[r, tp] = i_val
-
-                d_val = float(theta_k_dec.get((r, tp), 0.0))
-                k_dec.lo[r, tp] = d_val
-                k_dec.up[r, tp] = d_val
-                
-                a_val = float(theta_a_bid.get((r, tp), data.a_dem_t[(r, tp)] if data.a_dem_t else data.a_dem.get(r, 0.0)))
+                a_val = a_true if fix_a_bid else _clip_value(float(theta_a_bid.get((r, tp), a_true)), 0.0, a_true)
                 a_bid.lo[r, tp] = a_val
                 a_bid.up[r, tp] = a_val
-
-                # Kcap is determined by transitions — fix it
-                if tp == times[0]:
-                    Kcap.lo[r, tp] = float(kcap_2025_dict[r])
-                    Kcap.up[r, tp] = float(kcap_2025_dict[r])
-                else:
-                    # Kcap implied by transitions; keep free so transition eqs work
-                    Kcap.lo[r, tp] = 0.0
-                    Kcap.up[r, tp] = float("inf")
-
             else:
-                # Non-strategic: no capacity changes, fixed Q_offer
-                v = float(kcap_2025_dict.get(r, 0.0))
+                # Non-strategic regions keep zero net capacity changes.
+                dK_net.lo[r, tp] = 0.0
+                dK_net.up[r, tp] = 0.0
+                Icap_pos.lo[r, tp] = 0.0
+                Icap_pos.up[r, tp] = 0.0
+                v = max(float(implied_kcap.get((r, tp), 0.0)), 0.0)
                 Q_offer.lo[r, tp] = v
                 Q_offer.up[r, tp] = v
 
-                Kcap.lo[r, tp] = v
-                Kcap.up[r, tp] = v
-
-                k_exp.lo[r, tp] = 0.0
-                k_exp.up[r, tp] = 0.0
-                k_dec.lo[r, tp] = 0.0
-                k_dec.up[r, tp] = 0.0
-                
-                a_val = float(data.a_dem_t[(r, tp)] if data.a_dem_t else data.a_dem.get(r, 0.0))
-                a_bid.lo[r, tp] = a_val
-                a_bid.up[r, tp] = a_val
+                a_bid.lo[r, tp] = a_true
+                a_bid.up[r, tp] = a_true
 
     # -- Offer Prices --
     for ex in data.regions:
         for im in data.regions:
             for tp in times:
-                ub = data.p_offer_ub[(ex, im)]
-                if ex in data.non_strategic:
-                    p_offer.lo[ex, im, tp] = 0.0
-                    p_offer.up[ex, im, tp] = 0.0
+                ub = float(data.p_offer_ub[(ex, im)])
+                if ex in non_strategic_regions:
+                    if ex == im:
+                        # Domestic non-strategic offer stays tied to endogenous c_man_var
+                        # through eq_self_offer; do not force it to zero here.
+                        p_offer.lo[ex, im, tp] = 0.0
+                        p_offer.up[ex, im, tp] = ub
+                    else:
+                        benchmark = _clip_value(float(data.c_man.get(ex, 0.0)), 0.0, ub)
+                        p_offer.lo[ex, im, tp] = benchmark
+                        p_offer.up[ex, im, tp] = benchmark
                 elif ex == player:
                     p_offer.lo[ex, im, tp] = 0.0
                     p_offer.up[ex, im, tp] = ub
                 else:
-                    v = float(theta_p_offer.get((ex, im, tp), 0.0))
+                    v = _clip_value(float(theta_p_offer.get((ex, im, tp), 0.0)), 0.0, ub)
                     p_offer.lo[ex, im, tp] = v
                     p_offer.up[ex, im, tp] = v
 
@@ -968,12 +1087,12 @@ def extract_state(
                 pass
 
     return {
+        "Kcap": _maybe_var("Kcap"),
+        "dK_net": _maybe_var("dK_net"),
+        "Icap_pos": _maybe_var("Icap_pos"),
         "Q_offer": _maybe_var("Q_offer"),
         "p_offer": _maybe_var("p_offer"),
         "a_bid": _maybe_var("a_bid"),
-        "Kcap": _maybe_var("Kcap"),
-        "k_exp": _maybe_var("k_exp"),
-        "k_dec": _maybe_var("k_dec"),
         "x": _maybe_var("x"),
         "x_dem": _maybe_var("x_dem"),
         "lam": _maybe_var("lam"),

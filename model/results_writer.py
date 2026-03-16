@@ -27,6 +27,8 @@ def write_results_excel(
     os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
 
     Q_offer = state.get("Q_offer", {})
+    Kcap = state.get("Kcap", {})
+    dK_net = state.get("dK_net", {})
     x_dem = state.get("x_dem", {})
     lam = state.get("lam", {})
     x = state.get("x", {})
@@ -42,11 +44,9 @@ def write_results_excel(
         for t in times:
             imports = sum(_safe_get(x, (exp, r, t), 0.0) for exp in data.regions)
             exports = sum(_safe_get(x, (r, imp, t), 0.0) for imp in data.regions)
-            
-            Kcap = state.get("Kcap", {})
-            k_exp = state.get("k_exp", {})
-            k_dec = state.get("k_dec", {})
-            
+            utilized_capacity = float(exports)
+            kcap_val = _safe_get(Kcap, (r, t), float((data.Kcap_2025 or data.Qcap).get(r, 0.0)))
+            utilization_rate = utilized_capacity / kcap_val if kcap_val > 0.0 else 0.0
             a_dem_used = data.a_dem_t.get((r, t), data.a_dem.get(r, 0.0)) if data.a_dem_t else data.a_dem.get(r, 0.0)
             b_dem_used = data.b_dem_t.get((r, t), data.b_dem.get(r, 0.0)) if data.b_dem_t else data.b_dem.get(r, 0.0)
             lam_val = _safe_get(lam, (r, t), 0.0)
@@ -56,15 +56,19 @@ def write_results_excel(
                 {
                     "r": r,
                     "t": t,
+                    "Kcap": kcap_val,
+                    "net_cap_change": _safe_get(dK_net, (r, t), 0.0),
+                    "Icap_report": max(_safe_get(dK_net, (r, t), 0.0), 0.0),
+                    "Dcap_report": max(-_safe_get(dK_net, (r, t), 0.0), 0.0),
                     "Q_offer": _safe_get(Q_offer, (r, t), 0.0),
-                    "Kcap": _safe_get(Kcap, (r, t), 0.0),
-                    "k_exp": _safe_get(k_exp, (r, t), 0.0),
-                    "k_dec": _safe_get(k_dec, (r, t), 0.0),
+                    "utilized_capacity": utilized_capacity,
+                    "utilization_rate": utilization_rate,
                     "x_dem": _safe_get(x_dem, (r, t), 0.0),
                     "lam": lam_val,
                     "obj": _safe_get(obj, r, 0.0), # Objective is scalar per region
                     "imports": float(imports),
                     "exports": float(exports),
+                    "Kcap_init": float((data.Kcap_2025 or data.Qcap).get(r, 0.0)),
                     "Qcap_init": float(data.Qcap.get(r, 0.0)),
                     "a_dem_used": a_dem_used,
                     "b_dem_used": b_dem_used,

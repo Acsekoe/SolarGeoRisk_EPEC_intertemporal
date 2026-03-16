@@ -124,6 +124,8 @@ def load_data_from_excel(path: str) -> ModelData:
     except ValueError as exc:
         raise ValueError("Missing required sheet: regions") from exc
 
+    df_regions = df_regions.rename(columns={"region": "r"})
+
     _require_columns(df_regions, ["r"], "regions")
     regions = [_norm_region(v) for v in df_regions["r"].tolist()]
     regions = [r for r in regions if r]
@@ -135,6 +137,27 @@ def load_data_from_excel(path: str) -> ModelData:
         df_params = pd.read_excel(path, sheet_name="params_region")
     except ValueError as exc:
         raise ValueError("Missing required sheet: params_region") from exc
+
+    col_mapping = {
+        "region": "r",
+        "qcap_exist_gw": "Qcap_exist (GW)",
+        "c_man_usd_per_kw": "c_man (USD/kW)",
+        "c_inv_musd_per_gw_per_yr": "c_inv (USD/kW)",
+        "f_hold_musd_per_gw_per_yr": "f_hold (USD/kW)",
+        "kcap_2025_gw": "Kcap_2025",
+        "g_exp_ub_per_yr": "g_exp_ub",
+        "g_dec_ub_per_yr": "g_dec_ub",
+        "p_offer_max_usd_per_kw": "p_offer_max",
+        "rho_p_scalar": "rho_p",
+        "p_full_usd_per_kw": "p_full",
+        "eps_abs_base_scalar": "eps_abs_base",
+    }
+    for yr in ["2025", "2030", "2035", "2040"]:
+        col_mapping[f"dmax_{yr}_gw"] = f"Dmax_{yr}"
+        col_mapping[f"a_dem_{yr}_usd_per_kw"] = f"a_dem_{yr}"
+        col_mapping[f"b_dem_{yr}_usd_per_kw_per_gw"] = f"b_dem_{yr}"
+
+    df_params = df_params.rename(columns=col_mapping)
 
     _require_columns(df_params, ["r", "Qcap_exist (GW)", "c_man (USD/kW)"], "params_region")
 
@@ -396,7 +419,7 @@ def load_data_from_excel(path: str) -> ModelData:
     return ModelData(
         regions=regions,
         players=players_list,
-        non_strategic=set(),
+        non_strategic=set(regions) - set(players_list),
         D=D,
         a_dem=a_dem,
         b_dem=b_dem,

@@ -37,38 +37,56 @@ def solve_gs_intertemporal(
         raise ValueError("stable_iters must be >= 1")
 
     times: List[str] = data.times or ["2025", "2030", "2035", "2040"]
-    kcap_2025 = data.Kcap_2025 if data.Kcap_2025 is not None else {r: float(data.Qcap.get(r, 0.0)) for r in data.regions}
+    move_times = _it._move_times(times)
+    init_kcap = _it._initial_capacity_by_region(data)
+    fix_a_bid = _it._fix_a_bid_to_true_dem(data)
 
     ctx = _it.build_model(data, working_directory=working_directory)
 
     # ---- Initialize theta dicts ----
     if initial_state:
+        raw_theta_dK_net: Dict[Tuple[str, str], float] = {
+            (r, tp): float(initial_state.get("dK_net", {}).get((r, tp), 0.0))
+            for r in data.players for tp in move_times
+        }
+        _it.validate_strategy_inputs(
+            data,
+            {(r, tp): float(initial_state.get("Q_offer", {}).get((r, tp), 0.8 * float(init_kcap[r]))) for r in data.players for tp in times},
+            None if fix_a_bid else {(r, tp): float(initial_state.get("a_bid", {}).get((r, tp), _it._true_demand_intercept(data, r, tp))) for r in data.players for tp in times},
+            raw_theta_dK_net,
+        )
+        theta_dK_net: Dict[Tuple[str, str], float] = {
+            (r, tp): float(raw_theta_dK_net[(r, tp)])
+            for r in data.players for tp in move_times
+        }
+        implied_kcap = _it._implied_capacity_path(data, times, theta_dK_net)
+        raw_theta_Q: Dict[Tuple[str, str], float] = {
+            (r, tp): float(initial_state.get("Q_offer", {}).get((r, tp), 0.8 * float(init_kcap[r])))
+            for r in data.players for tp in times
+        }
         theta_Q: Dict[Tuple[str, str], float] = {
-            (r, tp): float(initial_state.get("Q_offer", {}).get((r, tp), 0.8 * float(kcap_2025[r])))
+            (r, tp): _it._clip_value(raw_theta_Q[(r, tp)], 0.0, max(float(implied_kcap[(r, tp)]), 0.0))
             for r in data.players for tp in times
         }
         theta_p_offer: Dict[Tuple[str, str, str], float] = {
             (ex, im, tp): float(initial_state.get("p_offer", {}).get((ex, im, tp), 0.0))
             for ex in data.regions for im in data.regions for tp in times
         }
-        theta_k_exp: Dict[Tuple[str, str], float] = {
-            (r, tp): float(initial_state.get("k_exp", {}).get((r, tp), 0.0))
-            for r in data.players for tp in times
-        }
-        theta_k_dec: Dict[Tuple[str, str], float] = {
-            (r, tp): float(initial_state.get("k_dec", {}).get((r, tp), 0.0))
+        raw_theta_a_bid: Dict[Tuple[str, str], float] = {
+            (r, tp): float(initial_state.get("a_bid", {}).get((r, tp), _it._true_demand_intercept(data, r, tp)))
             for r in data.players for tp in times
         }
         theta_a_bid: Dict[Tuple[str, str], float] = {
-            (r, tp): float(initial_state.get("a_bid", {}).get((r, tp), data.a_dem_t[(r, tp)] if data.a_dem_t else data.a_dem.get(r, 0.0)))
+            (r, tp): _it._true_demand_intercept(data, r, tp) if fix_a_bid
+            else _it._clip_value(raw_theta_a_bid[(r, tp)], 0.0, _it._true_demand_intercept(data, r, tp))
             for r in data.players for tp in times
         }
     else:
-        theta_Q = {(r, tp): 0.8 * float(kcap_2025[r]) for r in data.players for tp in times}
+        theta_dK_net = {(r, tp): 0.0 for r in data.players for tp in move_times}
+        implied_kcap = _it._implied_capacity_path(data, times, theta_dK_net)
+        theta_Q = {(r, tp): 0.8 * float(implied_kcap[(r, tp)]) for r in data.players for tp in times}
         theta_p_offer = {(ex, im, tp): 0.5 * float(data.p_offer_ub[(ex, im)]) for ex in data.regions for im in data.regions for tp in times}
-        theta_k_exp = {(r, tp): 0.0 for r in data.players for tp in times}
-        theta_k_dec = {(r, tp): 0.0 for r in data.players for tp in times}
-        theta_a_bid = {(r, tp): float(data.a_dem_t[(r, tp)] if data.a_dem_t else data.a_dem.get(r, 0.0)) for r in data.players for tp in times}
+        theta_a_bid = {(r, tp): _it._true_demand_intercept(data, r, tp) for r in data.players for tp in times}
 
     theta_obj: Dict[str, float] = {r: 0.0 for r in data.players}
 
@@ -76,7 +94,12 @@ def solve_gs_intertemporal(
         return abs(new - old) / max(scale, 1e-12)
 
     def _q_scale(r: str) -> float:
-        return max(float(kcap_2025.get(r, 0.0)), 1.0)
+        return max(float(init_kcap.get(r, 0.0)), 1.0)
+
+    def _dk_scale(r: str) -> float:
+        exp_scale = float((data.g_exp_ub or {}).get(r, 0.0)) * float(init_kcap.get(r, 0.0))
+        dec_scale = float((data.g_dec_ub or {}).get(r, 0.0)) * float(init_kcap.get(r, 0.0))
+        return max(exp_scale, dec_scale, 1.0)
 
     def _p_scale(ex: str, im: str) -> float:
         return max(float(data.p_offer_ub[(ex, im)]), 1e-3)
@@ -90,13 +113,9 @@ def solve_gs_intertemporal(
         solve_kwargs["solver_options"] = solver_options
 
     def _update_prox_reference() -> None:
-        q_last = ctx.params.get("Q_offer_last")
         poffer_last = ctx.params.get("p_offer_last")
-        if q_last is None or poffer_last is None:
+        if poffer_last is None:
             return
-        for r in data.regions:
-            for tp in times:
-                q_last[r, tp] = float(theta_Q.get((r, tp), float(kcap_2025[r])))
         for ex in data.regions:
             for im in data.regions:
                 for tp in times:
@@ -106,9 +125,8 @@ def solve_gs_intertemporal(
         r_strat = 0.0
 
         prev_Q = dict(theta_Q)
+        prev_dK_net = dict(theta_dK_net)
         prev_poffer = dict(theta_p_offer)
-        prev_k_exp = dict(theta_k_exp)
-        prev_k_dec = dict(theta_k_dec)
         prev_a_bid = dict(theta_a_bid)
         prev_obj = dict(theta_obj)
 
@@ -125,8 +143,7 @@ def solve_gs_intertemporal(
             _update_prox_reference()
             _it.apply_player_fixings(
                 ctx, data,
-                theta_Q, theta_p_offer,
-                theta_k_exp, theta_k_dec,
+                theta_Q, theta_dK_net, theta_p_offer,
                 theta_a_bid,
                 player=p,
             )
@@ -135,18 +152,26 @@ def solve_gs_intertemporal(
             state = _it.extract_state(ctx)
             last_state = state
 
+            dK_net_sol = state.get("dK_net", {})
             Q_sol = state.get("Q_offer", {})
             poffer_sol = state.get("p_offer", {})
-            k_exp_sol = state.get("k_exp", {})
-            k_dec_sol = state.get("k_dec", {})
             a_bid_sol = state.get("a_bid", {})
             obj_sol = state.get("obj", {})
+
+            # Update net capacity changes and recompute the implied stock path.
+            for tp in move_times:
+                key = (p, tp)
+                if key in dK_net_sol:
+                    br = float(dK_net_sol[key])
+                    theta_dK_net[key] = (1.0 - omega) * theta_dK_net[key] + omega * br
+
+            implied_kcap = _it._implied_capacity_path(data, times, theta_dK_net)
 
             # Update Q_offer
             for tp in times:
                 key = (p, tp)
                 if key in Q_sol:
-                    br = float(Q_sol[key])
+                    br = _it._clip_value(float(Q_sol[key]), 0.0, max(float(implied_kcap[key]), 0.0))
                     theta_Q[key] = (1.0 - omega) * theta_Q[key] + omega * br
 
             # Update p_offer
@@ -157,28 +182,29 @@ def solve_gs_intertemporal(
                         br = float(poffer_sol[key])
                         theta_p_offer[key] = (1.0 - omega) * theta_p_offer[key] + omega * br
 
-            # Update capacity decisions and a_bid
-            for tp in times:
-                sk = (p, tp)
-                if sk in k_exp_sol:
-                    theta_k_exp[sk] = (1.0 - omega) * theta_k_exp[sk] + omega * float(k_exp_sol[sk])
-                if sk in k_dec_sol:
-                    theta_k_dec[sk] = (1.0 - omega) * theta_k_dec[sk] + omega * float(k_dec_sol[sk])
-                if sk in a_bid_sol:
-                    theta_a_bid[sk] = (1.0 - omega) * theta_a_bid[sk] + omega * float(a_bid_sol[sk])
+            # Update a_bid
+            if not fix_a_bid:
+                for tp in times:
+                    sk = (p, tp)
+                    if sk in a_bid_sol:
+                        theta_a_bid[sk] = (1.0 - omega) * theta_a_bid[sk] + omega * float(a_bid_sol[sk])
 
             if isinstance(obj_sol, dict):
                 theta_obj[p] = float(obj_sol.get(p, 0.0))
 
         # ---- Convergence metrics ----
+        prev_kcap_path = _it._implied_capacity_path(data, times, prev_dK_net)
+        curr_kcap_path = _it._implied_capacity_path(data, times, theta_dK_net)
         for r in data.players:
+            for tp in move_times:
+                r_strat = max(r_strat, _scaled_change(theta_dK_net[(r, tp)], prev_dK_net[(r, tp)], _dk_scale(r)))
             for tp in times:
+                r_strat = max(r_strat, _scaled_change(curr_kcap_path[(r, tp)], prev_kcap_path[(r, tp)], _q_scale(r)))
                 r_strat = max(r_strat, _scaled_change(theta_Q[(r, tp)], prev_Q[(r, tp)], _q_scale(r)))
                 
-                # Compare a_bid change scaled by a_true
-                a_scale = float(data.a_dem_t[(r, tp)] if data.a_dem_t else data.a_dem.get(r, 100.0))
-                r_strat = max(r_strat, _scaled_change(theta_a_bid[(r, tp)], prev_a_bid[(r, tp)], a_scale))
-                # Optionally add k_exp, k_dec to convergence metric
+                if not fix_a_bid:
+                    a_scale = _it._true_demand_intercept(data, r, tp)
+                    r_strat = max(r_strat, _scaled_change(theta_a_bid[(r, tp)], prev_a_bid[(r, tp)], a_scale))
 
         for ex in data.regions:
             for im in data.regions:

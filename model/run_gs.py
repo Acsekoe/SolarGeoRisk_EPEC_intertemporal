@@ -22,6 +22,8 @@ else:
 
 from data_prep import load_data_from_excel
 from gauss_seidel import solve_gs_intertemporal
+import model_llp_planner as llp
+import model_main as _it
 from plot_results import write_default_plots
 from results_writer import write_results_excel
 
@@ -32,7 +34,7 @@ PROJECT_ROOT = os.path.dirname(SCRIPTS_DIR)
 
 @dataclass(frozen=True)
 class RunConfig:
-    excel_path: str = os.path.join(PROJECT_ROOT, "inputs", "input_data_intertemporal_final.xlsx")
+    excel_path: str = os.path.join(PROJECT_ROOT, "inputs", "input_data_intertemporal.xlsx")
     out_dir: str = os.path.join(PROJECT_ROOT, "outputs")
     plots_dir: str = os.path.join(PROJECT_ROOT, "plots")
 
@@ -47,7 +49,7 @@ class RunConfig:
     tol_obj: float = 1e-2
     stable_iters: int = 3
     eps_x: float = 1e-3
-    eps_comp: float = 1e-4
+    eps_comp: float = 1
     workdir: str | None = None
     convergence_mode: str = "combined"  # "strategy", "objective", or "combined"
     workers: int = 1  # 1=sequential, >1=parallel
@@ -73,7 +75,7 @@ class RunConfig:
     use_quad: bool = True
 
     # Scenario name (e.g., "high_all", "low_all") to override init_q_offer
-    scenario: str | None = "2024_actual"
+    scenario: str | None = "llp_planner"  # "llp_planner", "2024_actual", "high_all", etc.
 
 
 # Multipliers applied to the base scenario for each time period
@@ -127,14 +129,17 @@ def _safe_float(v: object, default: float = 0.0) -> float:
 
 
 def _print_state_summary(*, data: ModelData, regions: list[str], state: dict[str, dict], tag: str = "SUMMARY") -> None:
+    kcap = state.get("Kcap", {}) or {}
+    dk_map = state.get("dK_net", {}) or {}
     q_offer = state.get("Q_offer", {}) or {}
     lam = state.get("lam", {}) or {}
+    x_map = state.get("x", {}) or {}
 
     if not regions:
         print(f"[{tag}] No regions configured; skipping Q_offer/lam print.")
         return
 
-    print(f"[{tag}] Q, Kcap, k_exp, k_dec, lam, and max offer prices by region and time:")
+    print(f"[{tag}] Q_offer, endogenous Kcap, net capacity change, utilization, lam, declared demand, and max offer prices by region and time:")
     
     # Collect all unique time periods from Q_offer keys
     times = sorted(list(set(k[1] for k in q_offer.keys() if isinstance(k, tuple) and len(k) > 1)))
@@ -143,11 +148,12 @@ def _print_state_summary(*, data: ModelData, regions: list[str], state: dict[str
     
     for r in regions:
         for t in times:
+            k_val = _safe_float(kcap.get((r, t), (data.Kcap_2025 or data.Qcap).get(r, 0.0)))
+            dk_val = _safe_float(dk_map.get((r, t), 0.0))
             q_val = _safe_float(q_offer.get((r, t), 0.0))
-            k_val = _safe_float(state.get("Kcap", {}).get((r, t), 0.0))
-            i_val = _safe_float(state.get("k_exp", {}).get((r, t), 0.0))
-            d_val = _safe_float(state.get("k_dec", {}).get((r, t), 0.0))
             l_val = _safe_float(lam.get((r, t), 0.0))
+            utilized = sum(_safe_float(x_map.get((r, dest, t), 0.0)) for dest in data.regions)
+            util_rate = utilized / k_val if k_val > 0.0 else 0.0
             
             x_dem_val = _safe_float(state.get("x_dem", {}).get((r, t), 0.0))
             a_true = float(data.a_dem_t.get((r, t), 0.0)) if data.a_dem_t else float(data.a_dem.get(r, 0.0))
@@ -165,7 +171,7 @@ def _print_state_summary(*, data: ModelData, regions: list[str], state: dict[str
             max_p = max([_safe_float(v) for k, v in p_offer_map.items() 
                           if isinstance(k, tuple) and len(k) == 3 and k[0] == r and k[2] == t], default=0.0)
             
-            print(f"  {r:<4} {t:<4} D={x_dem_val:<6.1f} a_bid={a_bid_val:<6.1f} | Q={q_val:<7.1f} K={k_val:<7.1f} I={i_val:<5.1f} D={d_val:<5.1f} lam={l_val:<6.1f} poffer={max_p:<6.1f} | c={c_man_val:<6.1f}")
+            print(f"  {r:<4} {t:<4} D={x_dem_val:<6.1f} a_bid={a_bid_val:<6.1f} | Q={q_val:<7.1f} K={k_val:<7.1f} dK={dk_val:<7.2f} util={util_rate:<5.2f} lam={l_val:<6.1f} poffer={max_p:<6.1f} | c={c_man_val:<6.1f}")
 
 
 def _gams_workdir(run_id: str, configured_workdir: str | None) -> str:
@@ -225,24 +231,40 @@ def _apply_data_overrides(data, cfg: RunConfig) -> None:
     if cfg.rho_prox is not None:
         data.settings["rho_prox"] = float(cfg.rho_prox)
     data.settings["use_quad"] = bool(cfg.use_quad)
+    data.settings["fix_a_bid_to_true_dem"] = True
 
 
 def _build_initial_state(data, cfg: RunConfig) -> dict[str, dict] | None:
     scenario_name = cfg.init_scenario if cfg.init_scenario else cfg.scenario
     if not scenario_name:
         return None
+    times = data.times or ["2025", "2030", "2035", "2040"]
+    kcap_init = _it._initial_capacity_path(data, times)
+    dK_zero = {(r, t): 0.0 for r in data.regions for t in _it._move_times(times)}
 
-    print(f"[CONFIG] Using init scenario: {scenario_name}")
-    init_q_source = INIT_SCENARIOS.get(scenario_name)
-    if init_q_source is None:
-        print(f"[WARN] Unknown scenario '{scenario_name}'. Using fallback 'high_all'.")
-        init_q_source = INIT_SCENARIOS["high_all"]
+    # ---- LLP Planner warm-start ----
+    if scenario_name == "llp_planner":
+        print("[CONFIG] Solving LLP planner benchmark (2025) for warm start...")
+        llp_ctx = llp.build_llp_planner_model(data, times_override=["2025"])
+        llp.solve_llp_planner(llp_ctx, solver="conopt")
+        llp_state = llp.extract_llp_state(llp_ctx, data)
+        ws = llp.build_epec_warmstart(llp_state, data, llp_time="2025")
+        # Print summary
+        for r in data.players:
+            q_val = ws["Q_offer"].get((r, "2025"), 0.0)
+            print(f"  Q_offer[{r}] = {q_val:.1f}")
+        ws["dK_net"] = dict(dK_zero)
+        print(f"[CONFIG] LLP warm-start ready (replicated across {len(times)} periods)")
+        return ws
 
     init_q: Dict[Tuple[str, str], float] = {}
     is_absolute = (scenario_name == "2024_actual")
+    init_q_source = INIT_SCENARIOS.get(scenario_name)
+    if init_q_source is None:
+        raise ValueError(f"Unknown init scenario '{scenario_name}'.")
     for r in data.players:
         base_val = float(init_q_source.get(r, 0.8 if not is_absolute else float(data.Qcap.get(r, 0.0))))
-        for t in data.times:
+        for t in times:
             time_mult = INIT_STRATEGY_MATRIX.get(t, 1.0)
             val = base_val * time_mult
             
@@ -257,7 +279,7 @@ def _build_initial_state(data, cfg: RunConfig) -> dict[str, dict] | None:
     for ex in data.regions:
         base_cost = float(data.c_man.get(ex, 0.0))
         for im in data.regions:
-            for t in data.times:
+            for t in times:
                 init_p_offer[(ex, im, t)] = base_cost
 
     print(f"[CONFIG] Initial p_offer initialized to regional c_man")
@@ -265,14 +287,23 @@ def _build_initial_state(data, cfg: RunConfig) -> dict[str, dict] | None:
     init_a_bid: Dict[Tuple[str, str], float] = {}
     if data.a_dem_t is not None:
         for r in data.regions:
-            for tp in data.times:
+            for tp in times:
                 init_a_bid[(r, tp)] = float(data.a_dem_t[(r, tp)])
     else:
         for r in data.regions:
-            for tp in data.times:
+            for tp in times:
                 init_a_bid[(r, tp)] = float(data.a_dem.get(r, 0.0))
 
-    return {"Q_offer": init_q, "p_offer": init_p_offer, "a_bid": init_a_bid}
+    for r in data.players:
+        for t in times:
+            init_q[(r, t)] = min(init_q[(r, t)], float(kcap_init[(r, t)]))
+
+    return {
+        "dK_net": dict(dK_zero),
+        "Q_offer": init_q,
+        "p_offer": init_p_offer,
+        "a_bid": init_a_bid,
+    }
 
 
 def _append_detailed_iter_rows(
@@ -285,6 +316,8 @@ def _append_detailed_iter_rows(
     rows: list[dict[str, object]],
 ) -> None:
     q_map = state.get("Q_offer", {})
+    kcap_map = state.get("Kcap", {})
+    dk_map = state.get("dK_net", {})
     lam_map = state.get("lam", {})
     mu_map = state.get("mu", {})
     beta_dem_map = state.get("beta_dem", {})
@@ -298,9 +331,6 @@ def _append_detailed_iter_rows(
     if not times:
         times = ["2025", "2030", "2035", "2040"]
     
-    kcap_map = state.get("Kcap", {})
-    iexp_map = state.get("k_exp", {})
-    idec_map = state.get("k_dec", {})
     w_cum_map = state.get("W_cum", {})
     a_bid_map = state.get("a_bid", {})
     c_man_var_map = state.get("c_man_var", {})
@@ -313,10 +343,9 @@ def _append_detailed_iter_rows(
                 "t": t,
                 "stable_count": stable_count,
                 "r_strat": r_strat,
+                "Kcap": _safe_float(kcap_map.get((r, t), (data.Kcap_2025 or data.Qcap).get(r, 0.0))),
+                "net_cap_change": _safe_float(dk_map.get((r, t), 0.0)),
                 "Q_offer": _safe_float(q_map.get((r, t))),
-                "Kcap": _safe_float(kcap_map.get((r, t))),
-                "k_exp": _safe_float(iexp_map.get((r, t))),
-                "k_dec": _safe_float(idec_map.get((r, t))),
                 "lam": _safe_float(lam_map.get((r, t))),
                 "mu": _safe_float(mu_map.get((r, t))),
                 "beta_dem": _safe_float(beta_dem_map.get((r, t))),
@@ -329,8 +358,13 @@ def _append_detailed_iter_rows(
             
             # Post-solve computed diagnostics
             x_dem_val = sum(_safe_float(x_map.get((src, r, t))) for src in data.regions)
+            utilized_capacity = sum(_safe_float(x_map.get((r, dest, t))) for dest in data.regions)
             a_true = float(data.a_dem_t.get((r, t), 0.0)) if data.a_dem_t else float(data.a_dem.get(r, 0.0))
             row["wedge"] = a_true - float(row["a_bid"] or a_true)
+            row["utilized_capacity"] = utilized_capacity
+            row["utilization_rate"] = utilized_capacity / float(row["Kcap"]) if float(row["Kcap"]) > 0.0 else 0.0
+            row["Icap_report"] = max(float(row["net_cap_change"]), 0.0)
+            row["Dcap_report"] = max(-float(row["net_cap_change"]), 0.0)
     
             for dest in data.regions:
                 row[f"x_exp_to_{dest}"] = _safe_float(x_map.get((r, dest, t)))
