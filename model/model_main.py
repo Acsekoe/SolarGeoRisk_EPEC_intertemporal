@@ -348,7 +348,6 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
         )
 
     settings = data.settings or {}
-    use_quad = bool(settings.get("use_quad", False))
 
     # =====================================================================
     # Step 2 — Container, sets, time set
@@ -854,17 +853,9 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
         )
 
         # ---- Penalties (replicated per period) ----
-        pen_p_offer_quad = z
-        if use_quad:
-            pen_p_offer_quad = Sum(
-                T,
-                -gp.Number(0.5) * ytn_p[T] * rho_p_p[r] * Sum(j, p_offer[r, j, T] * p_offer[r, j, T]),
-            )
-
-        # Linear penalties
-        pen_p_offer_lin = Sum(
+        pen_p_offer_quad = Sum(
             T,
-            -ytn_p[T] * rho_p_p[r] * Sum(j, p_offer[r, j, T]),
+            -gp.Number(0.5) * ytn_p[T] * rho_p_p[r] * Sum(j, p_offer[r, j, T] * p_offer[r, j, T]),
         )
 
         # Proximal regularization
@@ -878,22 +869,13 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
         )
 
         # ---- Assemble objective ----
-        if use_quad:
-            obj_welfare = (
-                d_surplus_t
-                + producer_term_t
-                + capacity_cost_t
-                + pen_p_offer_quad
-                + pen_prox_poffer
-            )
-        else:
-            obj_welfare = (
-                d_surplus_t
-                + producer_term_t
-                + capacity_cost_t
-                + pen_p_offer_lin
-                + pen_prox_poffer
-            )
+        obj_welfare = (
+            d_surplus_t
+            + producer_term_t
+            + capacity_cost_t
+            + pen_p_offer_quad
+            + pen_prox_poffer
+        )
 
         models[r] = Model(
             m,
