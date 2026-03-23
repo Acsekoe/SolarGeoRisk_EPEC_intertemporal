@@ -144,6 +144,7 @@ def load_data_from_excel(path: str) -> ModelData:
         "c_man_usd_per_kw": "c_man (USD/kW)",
         "c_inv_musd_per_gw_per_yr": "c_inv (USD/kW)",
         "f_hold_musd_per_gw_per_yr": "f_hold (USD/kW)",
+        "c_hold_musd_per_gw_per_yr": "f_hold (USD/kW)",
         "kcap_2025_gw": "Kcap_2025",
         "g_exp_ub_per_yr": "g_exp_ub",
         "g_dec_ub_per_yr": "g_dec_ub",
@@ -298,6 +299,9 @@ def load_data_from_excel(path: str) -> ModelData:
     rho_p_default = _get_setting_float(settings, "rho_p", 1e-3)
     eps_comp = _get_setting_float(settings, "eps_comp", 1e-6)
     eps_x = _get_setting_float(settings, "eps_x", 1e-3)
+    # Discount rate for NPV computation.  0.0 = undiscounted (block-length weighting only).
+    discount_rate = _get_setting_float(settings, "discount_rate", 0.0)
+    base_year = int(_get_setting_float(settings, "base_year", 2025.0))
 
     players_raw = settings.get("players", None)
     players_list: List[str] = []
@@ -403,6 +407,20 @@ def load_data_from_excel(path: str) -> ModelData:
                 print(f"[DEMAND CAL] t={tp}: a min/mean/max = {min(a_vals):.2f}/{sum(a_vals)/len(a_vals):.2f}/{max(a_vals):.2f} "
                       f"b min/mean/max = {min(b_vals):.4f}/{sum(b_vals)/len(b_vals):.4f}/{max(b_vals):.4f}")
 
+    # --- NPV discount factors and period lengths ---
+    years_to_next: Dict[str, float] = {"2025": 5.0, "2030": 5.0, "2035": 5.0, "2040": 5.0}
+
+    beta_t: Dict[str, float] = {}
+    for tp in _TIMES:
+        t_int = int(tp)
+        if discount_rate == 0.0:
+            beta_t[tp] = 1.0
+        else:
+            beta_t[tp] = 1.0 / ((1.0 + discount_rate) ** (t_int - base_year))
+
+    print(f"[DATA LOAD] discount_rate={discount_rate} base_year={base_year}")
+    print(f"[DATA LOAD] beta_t={beta_t}")
+
     # Debug print as requested
     def _print_stats(name: str, d: dict):
         vals = [v for v in d.values() if not pd.isna(v)]
@@ -445,4 +463,6 @@ def load_data_from_excel(path: str) -> ModelData:
         c_inv=c_inv,
         a_dem_t=a_dem_t_impl,
         b_dem_t=b_dem_t_impl,
+        beta_t=beta_t,
+        years_to_next=years_to_next,
     )

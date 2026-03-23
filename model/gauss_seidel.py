@@ -90,6 +90,13 @@ def solve_gs_intertemporal(
 
     theta_obj: Dict[str, float] = {r: 0.0 for r in data.players}
 
+    # c_man_var iterate for non-strategic exporters — initialised to the static base cost
+    # and updated after each player solve from the extracted LBD variable.
+    theta_c_man_var: Dict[Tuple[str, str], float] = {
+        (r, tp): float(data.c_man.get(r, 0.0))
+        for r in data.regions for tp in times
+    }
+
     def _scaled_change(new: float, old: float, scale: float) -> float:
         return abs(new - old) / max(scale, 1e-12)
 
@@ -113,13 +120,39 @@ def solve_gs_intertemporal(
         solve_kwargs["solver_options"] = solver_options
 
     def _update_prox_reference() -> None:
+        # p_offer_last
         poffer_last = ctx.params.get("p_offer_last")
-        if poffer_last is None:
-            return
-        for ex in data.regions:
-            for im in data.regions:
+        if poffer_last is not None:
+            for ex in data.regions:
+                for im in data.regions:
+                    for tp in times:
+                        poffer_last[ex, im, tp] = float(theta_p_offer.get((ex, im, tp), 0.0))
+
+        # Q_offer_last
+        q_last = ctx.params.get("Q_offer_last")
+        if q_last is not None:
+            for r in data.regions:
                 for tp in times:
-                    poffer_last[ex, im, tp] = float(theta_p_offer.get((ex, im, tp), 0.0))
+                    q_last[r, tp] = float(theta_Q.get((r, tp), 0.0))
+
+        # Icap_pos_last / Dcap_neg_last — derived from theta_dK_net
+        icap_last = ctx.params.get("Icap_pos_last")
+        dcap_last = ctx.params.get("Dcap_neg_last")
+        if icap_last is not None and dcap_last is not None:
+            for r in data.players:
+                for tp in move_times:
+                    d_val = float(theta_dK_net.get((r, tp), 0.0))
+                    icap_last[r, tp] = max(d_val, 0.0)
+                    dcap_last[r, tp] = max(-d_val, 0.0)
+
+        # a_bid_last
+        a_last = ctx.params.get("a_bid_last")
+        if a_last is not None:
+            for r in data.regions:
+                for tp in times:
+                    a_last[r, tp] = float(
+                        theta_a_bid.get((r, tp), _it._true_demand_intercept(data, r, tp))
+                    )
 
     for it in range(1, iters + 1):
         r_strat = 0.0
@@ -146,6 +179,7 @@ def solve_gs_intertemporal(
                 theta_Q, theta_dK_net, theta_p_offer,
                 theta_a_bid,
                 player=p,
+                theta_c_man_var=theta_c_man_var,
             )
             ctx.models[p].solve(**solve_kwargs)
 
@@ -157,6 +191,14 @@ def solve_gs_intertemporal(
             poffer_sol = state.get("p_offer", {})
             a_bid_sol = state.get("a_bid", {})
             obj_sol = state.get("obj", {})
+
+            # Update c_man_var iterate for all regions from the solved LBD variable.
+            c_man_var_sol = state.get("c_man_var", {})
+            for r in data.regions:
+                for tp in times:
+                    key = (r, tp)
+                    if key in c_man_var_sol:
+                        theta_c_man_var[key] = float(c_man_var_sol[key])
 
             # Update net capacity changes and recompute the implied stock path.
             for tp in move_times:

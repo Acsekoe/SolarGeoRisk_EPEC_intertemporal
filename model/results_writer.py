@@ -34,6 +34,8 @@ def write_results_excel(
     x = state.get("x", {})
     p_offer = state.get("p_offer", {})
     obj = state.get("obj", {})
+    # Solved c_man_var from the model (not reconstructed).
+    c_man_var = state.get("c_man_var", {})
 
     times = data.times or ["2025", "2030", "2035", "2040"]
 
@@ -73,6 +75,10 @@ def write_results_excel(
                     "a_dem_used": a_dem_used,
                     "b_dem_used": b_dem_used,
                     "Q_implied": Q_implied,
+                    # Solved manufacturing cost variable (actual model level, not reconstructed).
+                    "c_man_var": _safe_get(c_man_var, (r, t), float(data.c_man.get(r, 0.0))),
+                    # Exogenous base manufacturing cost for reference.
+                    "c_man_base": float(data.c_man.get(r, 0.0)),
                 }
             )
             

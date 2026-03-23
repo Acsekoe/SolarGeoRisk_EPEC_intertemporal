@@ -1,9 +1,34 @@
 """
 Intertemporal (4-period) perfect-foresight EPEC model using Offer-Based Uniform-Price Settlement.
 
-Each strategic player maximises the discounted sum of welfare across
+Each strategic player maximises the present-value sum of welfare across
 T = {"2025", "2030", "2035", "2040"}, subject to per-period LLP KKT
 conditions, dynamic capacity transitions, and offer price decisions.
+
+Discounting
+-----------
+beta_t[T] = 1 / (1 + r)^(T - base_year) where r = discount_rate.
+When discount_rate = 0 the objective reduces to block-length-weighted
+(undiscounted) aggregation: Sum_t ytn[t] * welfare_t.
+
+Investment cost interpretation
+-------------------------------
+c_inv [mUSD/GW-yr]: annualized capital charge per GW-year of expansion rate.
+    Annual cost = c_inv * Icap_pos   (Icap_pos in GW/yr)
+    Over period of ytn years: c_inv * Icap_pos * ytn
+    Discounted: beta_t * ytn * c_inv * Icap_pos
+f_hold [mUSD/GW-yr]: annual O&M holding cost per GW of installed capacity.
+    Cost per period: beta_t * ytn * f_hold * Kcap
+
+Shadow-price naming
+-------------------
+mu_offer  (EPEC model_main.py): dual on the offer-capacity constraint
+          Q_offer[exp,t] - sum_imp x[exp,imp,t] >= 0.
+          This is NOT a physical capacity scarcity rent; it reflects
+          the exporter's residual offer margin above actual shipments.
+mu_cap    (model_llp_planner.py): dual on the physical capacity constraint
+          sum_imp x[exp,imp,t] <= Kcap[exp,t] in the planner.
+          This IS a physical scarcity rent.
 """
 from __future__ import annotations
 
@@ -84,8 +109,8 @@ class ModelData:
     c_inv: Dict[str, float] | None = None   # investment cost
 
     # Discounting
-    beta_t: Dict[str, float] | None = None  # discount per period (default 1)
-    years_to_next: Dict[str, float] | None = None  # interval lengths
+    beta_t: Dict[str, float] | None = None  # NPV discount factor: beta_t = 1/(1+r)^(t-base_year)
+    years_to_next: Dict[str, float] | None = None  # interval lengths (ytn[t] = years in block t)
 
 
 @dataclass
@@ -531,6 +556,14 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
     rho_prox_val = float(settings.get("rho_prox", 0.0))
     rho_prox = gp.Number(rho_prox_val)
 
+    # c_pen_* proximal penalty scalars (controllable from run_gs.py via settings).
+    # Each penalises the squared deviation of the strategic variable from its
+    # previous Gauss-Seidel iterate: -0.5 * c_pen * (X - X_last)^2
+    c_pen_q   = gp.Number(float(settings.get("c_pen_q",   0.0)))  # Q_offer
+    c_pen_cap = gp.Number(float(settings.get("c_pen_cap", 0.0)))  # Icap_pos & Dcap_neg
+    c_pen_p   = gp.Number(float(settings.get("c_pen_p",   0.0)))  # p_offer (supplements rho_prox)
+    c_pen_a   = gp.Number(float(settings.get("c_pen_a",   0.0)))  # a_bid
+
     kappa_map = getattr(data, "kappa_Q", None) or {}
     kappa_by_r = {k: float(kappa_map.get(k, 0.0)) for k in data.regions}
     kappa_Q = Parameter(
@@ -538,11 +571,19 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
         records=[(k, kappa_by_r[k]) for k in data.regions],
     )
 
-    # Proximal reference params [imp, exp, T]
-    p_offer_last = Parameter(m, "p_offer_last", domain=[exp, imp, T])
+    # Proximal reference parameters — updated by gauss_seidel before each player solve.
+    p_offer_last  = Parameter(m, "p_offer_last",  domain=[exp, imp, T])
+    Q_offer_last  = Parameter(m, "Q_offer_last",  domain=[R, T])
+    Icap_pos_last = Parameter(m, "Icap_pos_last", domain=[R, T])
+    Dcap_neg_last = Parameter(m, "Dcap_neg_last", domain=[R, T])
+    a_bid_last    = Parameter(m, "a_bid_last",    domain=[R, T])
 
-    # Initialize proximal references
-    p_offer_last[exp, imp, T] = z
+    # Initialise all reference values to zero
+    p_offer_last[exp, imp, T]  = z
+    Q_offer_last[R, T]         = z
+    Icap_pos_last[R, T]        = z
+    Dcap_neg_last[R, T]        = z
+    a_bid_last[R, T]           = z
 
     # lam upper bound for variable bounding (use max p_offer_ub)
     max_p_offer = max(float(v) for v in data.p_offer_ub.values()) if data.p_offer_ub else 1000.0
@@ -554,19 +595,19 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
         records=[(i, lam_ub_values[i]) for i in data.regions],
     )
 
-    # mu upper bound
-    mu_ub_values: Dict[str, float] = {}
+    # mu_offer upper bound (dual of offer-capacity constraint Q_offer - sum_imp x >= 0)
+    mu_offer_ub_values: Dict[str, float] = {}
     for r in data.regions:
-        mu_ub_values[r] = max(
+        mu_offer_ub_values[r] = max(
             0.0,
             max(
                 float(lam_ub_values[i])
                 for i in data.regions
             ),
         )
-    mu_ub = Parameter(
-        m, "mu_ub", domain=[R],
-        records=[(r, mu_ub_values[r]) for r in data.regions],
+    mu_offer_ub = Parameter(
+        m, "mu_offer_ub", domain=[R],
+        records=[(r, mu_offer_ub_values[r]) for r in data.regions],
     )
 
     # gamma upper bound - based on reasonable max bounds for p_offer
@@ -577,7 +618,7 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
                 float(data.c_ship[(r, i)])
                 + float(data.p_offer_ub[(r, i)])
                 + float(data.eps_x) * float(kcap_2025_dict.get(r, 0.0) * 10) # arbitrary scalar for upper bound
-                + float(mu_ub_values.get(r, 0.0))
+                + float(mu_offer_ub_values.get(r, 0.0))
             )
     gamma_ub = Parameter(
         m, "gamma_ub", domain=[exp, imp],
@@ -593,22 +634,19 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
 
     # -- ULP strategic variables --
     Kcap = Variable(m, "Kcap", domain=[R, T], type=VariableType.POSITIVE)
-    dK_net = Variable(m, "dK_net", domain=[R, T], type=VariableType.FREE)
     Icap_pos = Variable(m, "Icap_pos", domain=[R, T], type=VariableType.POSITIVE)
+    Dcap_neg = Variable(m, "Dcap_neg", domain=[R, T], type=VariableType.POSITIVE)
     Q_offer = Variable(m, "Q_offer", domain=[R, T], type=VariableType.POSITIVE)
     p_offer = Variable(m, "p_offer", domain=[exp, imp, T], type=VariableType.POSITIVE)
     a_bid = Variable(m, "a_bid", domain=[R, T], type=VariableType.POSITIVE)
 
     # Terminal controls are fixed to zero to avoid end-of-horizon junk decisions.
-    dK_net.fx[R, times[-1]] = 0.0
     Icap_pos.fx[R, times[-1]] = 0.0
+    Dcap_neg.fx[R, times[-1]] = 0.0
 
     # Link p_offer up bound
     p_offer.up[exp, imp, T] = p_offer_ub_p[exp, imp]
 
-    # a_bid is the declared demand intercept seen by the LLP/KKT. Strategic
-    # regions may understate willingness-to-pay here intentionally.
-    # a_dem_t remains the true demand intercept used in upper-level welfare.
     a_bid.up[R, T] = a_dem_t_p[R, T]
 
     # -- Learning-By-Doing Variables --
@@ -630,7 +668,7 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
     x_dem.up[R, T] = Dmax_t_p[R, T]
 
     lam_var = Variable(m, "lam", domain=[R, T], type=VariableType.FREE)
-    mu = Variable(m, "mu", domain=[R, T], type=VariableType.POSITIVE)
+    mu_offer = Variable(m, "mu_offer", domain=[R, T], type=VariableType.POSITIVE)
     gamma = Variable(m, "gamma", domain=[exp, imp, T], type=VariableType.POSITIVE)
     beta_dem = Variable(m, "beta_dem", domain=[R, T], type=VariableType.POSITIVE)
     psi_dem = Variable(m, "psi_dem", domain=[R, T], type=VariableType.POSITIVE)
@@ -639,16 +677,14 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
     lam_var.up[R, T] = lam_ub[R]
     beta_dem.up[R, T] = lam_ub[R]
     psi_dem.up[R, T] = lam_ub[R]
-    mu.up[R, T] = mu_ub[R]
+    mu_offer.up[R, T] = mu_offer_ub[R]
     gamma.up[exp, imp, T] = gamma_ub[exp, imp]
 
     # =====================================================================
     # Step 4 — LLP equations (time-indexed)
     # =====================================================================
 
-    # --- Primal LLP Objective (not directly used in MPEC solve but kept for reporting) ---
-    # The follower clears on declared demand. This is the intentional
-    # strategic demand-misreporting channel and must stay aligned with eq_stat_dem.
+    # --- Primal LLP Objective (kept for reporting) ---
     llp_gross_surplus = Sum(
         [R, T],
         a_bid[R, T] * x_dem[R, T]
@@ -685,7 +721,7 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
         (p_offer[exp, imp, T] + c_ship[exp, imp])
         + eps_x * x[exp, imp, T]
         - lam_var[imp, T]
-        + mu[exp, T]
+        + mu_offer[exp, T]
         - gamma[exp, imp, T]
         == z
     )
@@ -700,14 +736,15 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
     )
 
     # --- Complementarity (KKT) ---
-    eq_comp_mu = Equation(m, "eq_comp_mu", domain=[exp, T])
+    # Complementarity for offer-capacity constraint: mu_offer * (Q_offer - sum_imp x) = 0
+    eq_comp_mu_offer = Equation(m, "eq_comp_mu_offer", domain=[exp, T])
     if eps_comp == 0.0:
-        eq_comp_mu[exp, T] = (
-            mu[exp, T] * (Q_offer[exp, T] - Sum(imp, x[exp, imp, T])) == z
+        eq_comp_mu_offer[exp, T] = (
+            mu_offer[exp, T] * (Q_offer[exp, T] - Sum(imp, x[exp, imp, T])) == z
         )
     else:
-        eq_comp_mu[exp, T] = (
-            mu[exp, T] * (Q_offer[exp, T] - Sum(imp, x[exp, imp, T])) <= eps_value
+        eq_comp_mu_offer[exp, T] = (
+            mu_offer[exp, T] * (Q_offer[exp, T] - Sum(imp, x[exp, imp, T])) <= eps_value
         )
 
     eq_comp_gamma = Equation(m, "eq_comp_gamma", domain=[exp, imp, T])
@@ -740,25 +777,22 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
     eq_kcap_init[R] = Kcap[R, times[0]] == Kcap_init_p[R]
 
     eq_kcap_transitions: Dict[str, Equation] = {}
-    eq_dk_exp_bounds: Dict[str, Equation] = {}
-    eq_dk_dec_bounds: Dict[str, Equation] = {}
-    eq_icap_pos_lb: Dict[str, Equation] = {}
+    eq_icap_ub: Dict[str, Equation] = {}
+    eq_dcap_ub: Dict[str, Equation] = {}
     for tp, tp_next in transition_pairs:
         eq_kcap_trans = Equation(m, f"eq_kcap_trans_{tp_next}", domain=[R])
-        eq_kcap_trans[R] = Kcap[R, tp_next] == Kcap[R, tp] + ytn_p[tp] * dK_net[R, tp]
+        eq_kcap_trans[R] = (
+            Kcap[R, tp_next] == Kcap[R, tp] + ytn_p[tp] * (Icap_pos[R, tp] - Dcap_neg[R, tp])
+        )
         eq_kcap_transitions[tp_next] = eq_kcap_trans
 
-        eq_dk_exp = Equation(m, f"eq_dk_exp_{tp}", domain=[R])
-        eq_dk_exp[R] = dK_net[R, tp] <= g_exp_p[R] * Kcap[R, tp]
-        eq_dk_exp_bounds[tp] = eq_dk_exp
+        eq_iub = Equation(m, f"eq_icap_ub_{tp}", domain=[R])
+        eq_iub[R] = Icap_pos[R, tp] <= g_exp_p[R] * Kcap[R, tp]
+        eq_icap_ub[tp] = eq_iub
 
-        eq_dk_dec = Equation(m, f"eq_dk_dec_{tp}", domain=[R])
-        eq_dk_dec[R] = -dK_net[R, tp] <= g_dec_p[R] * Kcap[R, tp]
-        eq_dk_dec_bounds[tp] = eq_dk_dec
-
-        eq_icap_lb = Equation(m, f"eq_icap_pos_lb_{tp}", domain=[R])
-        eq_icap_lb[R] = Icap_pos[R, tp] >= dK_net[R, tp]
-        eq_icap_pos_lb[tp] = eq_icap_lb
+        eq_dub = Equation(m, f"eq_dcap_ub_{tp}", domain=[R])
+        eq_dub[R] = Dcap_neg[R, tp] <= g_dec_p[R] * Kcap[R, tp]
+        eq_dcap_ub[tp] = eq_dub
 
     # Pin domestic self-offer to domestic manufacturing cost
     eq_self_offer = Equation(m, "eq_self_offer", domain=[R, T])
@@ -782,10 +816,9 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
         W_cum[R, "2040"] == W_cum[R, "2035"] + ytn_p["2035"] * Sum(imp, x[R, imp, "2035"])
     )
 
-    # Cost curve constraints (Inequality allows W_cum to grow past the floor bound)
     eq_c_man_curve = Equation(m, "eq_c_man_curve", domain=[R, T])
     eq_c_man_curve[R, T] = (
-        c_man_var[R, T] >= c_man_base_p[R] - (theta_lbd_p[R] * W_cum[R, T])
+        c_man_var[R, T] == c_man_base_p[R] - (theta_lbd_p[R] * W_cum[R, T])
     )
 
     # =====================================================================
@@ -797,7 +830,7 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
         "eq_q_offer_cap": eq_q_offer_cap,
         "eq_stat_x": eq_stat_x,
         "eq_stat_dem": eq_stat_dem,
-        "eq_comp_mu": eq_comp_mu,
+        "eq_comp_mu_offer": eq_comp_mu_offer,
         "eq_comp_gamma": eq_comp_gamma,
         "eq_comp_beta_dem": eq_comp_beta_dem,
         "eq_comp_psi_dem": eq_comp_psi_dem,
@@ -810,9 +843,8 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
         "eq_c_man_curve": eq_c_man_curve,
     }
     equations.update({f"eq_kcap_trans_{tp_next}": eq for tp_next, eq in eq_kcap_transitions.items()})
-    equations.update({f"eq_dk_exp_{tp}": eq for tp, eq in eq_dk_exp_bounds.items()})
-    equations.update({f"eq_dk_dec_{tp}": eq for tp, eq in eq_dk_dec_bounds.items()})
-    equations.update({f"eq_icap_pos_lb_{tp}": eq for tp, eq in eq_icap_pos_lb.items()})
+    equations.update({f"eq_icap_ub_{tp}": eq for tp, eq in eq_icap_ub.items()})
+    equations.update({f"eq_dcap_ub_{tp}": eq for tp, eq in eq_dcap_ub.items()})
 
     # =====================================================================
     # Step 6 — Objective = sum over time
@@ -823,8 +855,6 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
 
         # ---- Per-period welfare components (summed over T) ----
 
-        # Upper-level welfare stays on true demand. The difference versus a_bid
-        # is the intentional strategic misreporting channel.
         d_surplus_t = Sum(
             T,
             beta_p[T] * ytn_p[T] * (
@@ -846,11 +876,10 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
 
         capacity_cost_t = Sum(
             T,
-            -beta_p[T] * ytn_p[T] * (
-                f_hold_p[r] * Kcap[r, T]
-                + c_inv_p[r] * Icap_pos[r, T]
-            ),
+            -beta_p[T] * ytn_p[T] * f_hold_p[r] * Kcap[r, T]
+            - beta_p[T] * ytn_p[T] * c_inv_p[r] * Icap_pos[r, T],
         )
+
 
         # ---- Penalties (replicated per period) ----
         pen_p_offer_quad = Sum(
@@ -858,14 +887,41 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
             -gp.Number(0.5) * ytn_p[T] * rho_p_p[r] * Sum(j, p_offer[r, j, T] * p_offer[r, j, T]),
         )
 
-        # Proximal regularization
         pen_prox_poffer = Sum(
             T,
-            -gp.Number(0.5) * ytn_p[T] * rho_prox * Sum(
+            -gp.Number(0.5) * (rho_prox + c_pen_p) * Sum(
                 j,
                 (p_offer[r, j, T] - p_offer_last[r, j, T])
                 * (p_offer[r, j, T] - p_offer_last[r, j, T]),
             ),
+        )
+
+        pen_prox_q = Sum(
+            T,
+            -gp.Number(0.5) * c_pen_q
+            * (Q_offer[r, T] - Q_offer_last[r, T])
+            * (Q_offer[r, T] - Q_offer_last[r, T]),
+        )
+
+        pen_prox_icap = Sum(
+            T,
+            -gp.Number(0.5) * c_pen_cap
+            * (Icap_pos[r, T] - Icap_pos_last[r, T])
+            * (Icap_pos[r, T] - Icap_pos_last[r, T]),
+        )
+
+        pen_prox_dcap = Sum(
+            T,
+            -gp.Number(0.5) * c_pen_cap
+            * (Dcap_neg[r, T] - Dcap_neg_last[r, T])
+            * (Dcap_neg[r, T] - Dcap_neg_last[r, T]),
+        )
+
+        pen_prox_a = Sum(
+            T,
+            -gp.Number(0.5) * c_pen_a
+            * (a_bid[r, T] - a_bid_last[r, T])
+            * (a_bid[r, T] - a_bid_last[r, T]),
         )
 
         # ---- Assemble objective ----
@@ -875,6 +931,10 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
             + capacity_cost_t
             + pen_p_offer_quad
             + pen_prox_poffer
+            + pen_prox_q
+            + pen_prox_icap
+            + pen_prox_dcap
+            + pen_prox_a
         )
 
         models[r] = Model(
@@ -910,19 +970,23 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
             "c_inv": c_inv_p,
             "beta_t": beta_p,
             "ytn": ytn_p,
-            "p_offer_last": p_offer_last,
+            "p_offer_last":  p_offer_last,
+            "Q_offer_last":  Q_offer_last,
+            "Icap_pos_last": Icap_pos_last,
+            "Dcap_neg_last": Dcap_neg_last,
+            "a_bid_last":    a_bid_last,
         },
         vars={
             "Kcap": Kcap,
-            "dK_net": dK_net,
             "Icap_pos": Icap_pos,
+            "Dcap_neg": Dcap_neg,
             "Q_offer": Q_offer,
             "p_offer": p_offer,
             "a_bid": a_bid,
             "x": x,
             "x_dem": x_dem,
             "lam": lam_var,
-            "mu": mu,
+            "mu_offer": mu_offer,
             "gamma": gamma,
             "W_cum": W_cum,
             "c_man_var": c_man_var,
@@ -946,8 +1010,14 @@ def apply_player_fixings(
     theta_a_bid: Dict[Tuple[str, str], float],
     *,
     player: str,
+    theta_c_man_var: Dict[Tuple[str, str], float] | None = None,
 ) -> None:
-    """Fix all other players' strategies; free current player's strategies."""
+    """Fix all other players' strategies; free current player's strategies.
+
+    theta_c_man_var: optional dict (region, time) -> current LBD-adjusted cost iterate.
+        Used to fix non-strategic exporters' export prices to their actual (LBD-adjusted)
+        manufacturing cost rather than the static base cost from data.c_man.
+    """
     times = data.times or list(_DEFAULT_TIMES)
     move_times = _move_times(times)
     final_t = times[-1]
@@ -956,8 +1026,8 @@ def apply_player_fixings(
     fix_a_bid = _fix_a_bid_to_true_dem(data)
 
     Kcap = ctx.vars["Kcap"]
-    dK_net = ctx.vars["dK_net"]
     Icap_pos = ctx.vars["Icap_pos"]
+    Dcap_neg = ctx.vars["Dcap_neg"]
     Q_offer = ctx.vars["Q_offer"]
     p_offer = ctx.vars["p_offer"]
     a_bid = ctx.vars["a_bid"]
@@ -967,17 +1037,14 @@ def apply_player_fixings(
             a_true = _true_demand_intercept(data, r, tp)
             Kcap.lo[r, tp] = 0.0
             Kcap.up[r, tp] = float("inf")
-            Icap_pos.lo[r, tp] = 0.0
-            Icap_pos.up[r, tp] = 0.0 if tp == final_t else float("inf")
+            is_terminal = (tp == final_t)
             if r == player:
-                # Active player controls the net capacity-change path. Kcap is
-                # implied by the stock equations and Q_offer is bounded by Kcap.
-                if tp in move_times:
-                    dK_net.lo[r, tp] = float("-inf")
-                    dK_net.up[r, tp] = float("inf")
-                else:
-                    dK_net.lo[r, tp] = 0.0
-                    dK_net.up[r, tp] = 0.0
+                # Active player: Icap_pos and Dcap_neg are free decision variables.
+                # Terminal period is already fixed to 0 via .fx in build_model.
+                Icap_pos.lo[r, tp] = 0.0
+                Icap_pos.up[r, tp] = 0.0 if is_terminal else float("inf")
+                Dcap_neg.lo[r, tp] = 0.0
+                Dcap_neg.up[r, tp] = 0.0 if is_terminal else float("inf")
                 Q_offer.lo[r, tp] = 0.0
                 Q_offer.up[r, tp] = float("inf")
 
@@ -985,21 +1052,19 @@ def apply_player_fixings(
                     a_bid.lo[r, tp] = a_true
                     a_bid.up[r, tp] = a_true
                 else:
-                    # Active player's declared demand remains a strategic variable.
                     a_bid.lo[r, tp] = 0.0
                     a_bid.up[r, tp] = a_true
 
             elif r in data.players:
-                # Other strategic players are fixed at the current Gauss-Seidel iterate.
-                if tp in move_times:
-                    d_val = float(theta_dK_net.get((r, tp), 0.0))
-                    dK_net.lo[r, tp] = d_val
-                    dK_net.up[r, tp] = d_val
-                    Icap_pos.lo[r, tp] = max(d_val, 0.0)
-                    Icap_pos.up[r, tp] = max(d_val, 0.0)
-                else:
-                    dK_net.lo[r, tp] = 0.0
-                    dK_net.up[r, tp] = 0.0
+                # Other strategic players: fix gross invest/decommission from GS iterate.
+                d_val = float(theta_dK_net.get((r, tp), 0.0)) if tp in move_times else 0.0
+                i_fix = 0.0 if is_terminal else max(d_val, 0.0)
+                d_fix = 0.0 if is_terminal else max(-d_val, 0.0)
+                Icap_pos.lo[r, tp] = i_fix
+                Icap_pos.up[r, tp] = i_fix
+                Dcap_neg.lo[r, tp] = d_fix
+                Dcap_neg.up[r, tp] = d_fix
+
                 q_val = _clip_value(float(theta_Q.get((r, tp), 0.0)), 0.0, max(float(implied_kcap.get((r, tp), 0.0)), 0.0))
                 Q_offer.lo[r, tp] = q_val
                 Q_offer.up[r, tp] = q_val
@@ -1008,11 +1073,11 @@ def apply_player_fixings(
                 a_bid.lo[r, tp] = a_val
                 a_bid.up[r, tp] = a_val
             else:
-                # Non-strategic regions keep zero net capacity changes.
-                dK_net.lo[r, tp] = 0.0
-                dK_net.up[r, tp] = 0.0
+                # Non-strategic regions: no capacity changes.
                 Icap_pos.lo[r, tp] = 0.0
                 Icap_pos.up[r, tp] = 0.0
+                Dcap_neg.lo[r, tp] = 0.0
+                Dcap_neg.up[r, tp] = 0.0
                 v = max(float(implied_kcap.get((r, tp), 0.0)), 0.0)
                 Q_offer.lo[r, tp] = v
                 Q_offer.up[r, tp] = v
@@ -1027,21 +1092,34 @@ def apply_player_fixings(
                 ub = float(data.p_offer_ub[(ex, im)])
                 if ex in non_strategic_regions:
                     if ex == im:
-                        # Domestic non-strategic offer stays tied to endogenous c_man_var
-                        # through eq_self_offer; do not force it to zero here.
+                        # Domestic: eq_self_offer pins p_offer[ex,ex] == c_man_var[ex].
+                        # Leave free so the equation can enforce it.
                         p_offer.lo[ex, im, tp] = 0.0
                         p_offer.up[ex, im, tp] = ub
                     else:
-                        benchmark = _clip_value(float(data.c_man.get(ex, 0.0)), 0.0, ub)
+                        # FIX 2: use LBD-adjusted c_man_var iterate for non-strategic
+                        # export prices instead of the static base cost.
+                        if theta_c_man_var is not None:
+                            c_var = float(theta_c_man_var.get((ex, tp), data.c_man.get(ex, 0.0)))
+                        else:
+                            c_var = float(data.c_man.get(ex, 0.0))
+                        benchmark = _clip_value(c_var, 0.0, ub)
                         p_offer.lo[ex, im, tp] = benchmark
                         p_offer.up[ex, im, tp] = benchmark
                 elif ex == player:
                     p_offer.lo[ex, im, tp] = 0.0
                     p_offer.up[ex, im, tp] = ub
                 else:
-                    v = _clip_value(float(theta_p_offer.get((ex, im, tp), 0.0)), 0.0, ub)
-                    p_offer.lo[ex, im, tp] = v
-                    p_offer.up[ex, im, tp] = v
+                    # FIX 1: for other strategic players, leave the domestic route free
+                    # so eq_self_offer keeps p_offer[ex,ex] == c_man_var[ex].
+                    # Only fix export routes (ex != im).
+                    if ex == im:
+                        p_offer.lo[ex, im, tp] = 0.0
+                        p_offer.up[ex, im, tp] = ub
+                    else:
+                        v = _clip_value(float(theta_p_offer.get((ex, im, tp), 0.0)), 0.0, ub)
+                        p_offer.lo[ex, im, tp] = v
+                        p_offer.up[ex, im, tp] = v
 
 
 # =============================================================================
@@ -1068,17 +1146,23 @@ def extract_state(
             except (AttributeError, TypeError):
                 pass
 
+    # Derive dK_net = Icap_pos - Dcap_neg (no longer a GAMS variable)
+    icap_d = _maybe_var("Icap_pos")
+    dcap_d = _maybe_var("Dcap_neg")
+    dK_net_d = {k: float(icap_d.get(k, 0.0)) - float(dcap_d.get(k, 0.0)) for k in set(icap_d) | set(dcap_d)}
+
     return {
         "Kcap": _maybe_var("Kcap"),
-        "dK_net": _maybe_var("dK_net"),
-        "Icap_pos": _maybe_var("Icap_pos"),
+        "dK_net": dK_net_d,
+        "Icap_pos": icap_d,
+        "Dcap_neg": dcap_d,
         "Q_offer": _maybe_var("Q_offer"),
         "p_offer": _maybe_var("p_offer"),
         "a_bid": _maybe_var("a_bid"),
         "x": _maybe_var("x"),
         "x_dem": _maybe_var("x_dem"),
         "lam": _maybe_var("lam"),
-        "mu": _maybe_var("mu"),
+        "mu_offer": _maybe_var("mu_offer"),
         "gamma": _maybe_var("gamma"),
         "beta_dem": _maybe_var("beta_dem"),
         "psi_dem": _maybe_var("psi_dem"),

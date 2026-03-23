@@ -47,18 +47,13 @@ def build_llp_planner_model(
     data: ModelData,
     *,
     working_directory: str | None = None,
-    times_override: List[str] | None = None,
 ) -> ModelContext:
     """Build the global-planner LLP benchmark model.
 
     Returns a ModelContext whose model key "planner" can be solved
     directly with ``ctx.models["planner"].solve(...)``.
-
-    Parameters
-    ----------
-    times_override : optional list of time periods to include (e.g. ["2025"])
     """
-    times: List[str] = times_override or data.times or list(_DEFAULT_TIMES)
+    times: List[str] = data.times or list(_DEFAULT_TIMES)
     regions = data.regions
 
     # ---- Container ----
@@ -202,8 +197,9 @@ def extract_llp_state(ctx: ModelContext, data: ModelData) -> Dict[str, object]:
         x           Dict[(exp,imp,t), float]  trade flows
         x_dem       Dict[(r,t), float]         consumption
         x_man       Dict[(r,t), float]         total production per exporter
-        lam         Dict[(r,t), float]         demand-balance dual (MCP)
-        mu          Dict[(r,t), float]         capacity dual (scarcity rent)
+        lam         Dict[(r,t), float]         demand-balance dual (market price)
+        mu_cap      Dict[(r,t), float]         physical capacity scarcity rent
+                                               (dual of sum_imp x[exp,imp,t] <= Kcap[exp,t])
         obj_total   float                      total objective
     """
     m = ctx.container
@@ -246,24 +242,22 @@ def extract_llp_state(ctx: ModelContext, data: ModelData) -> Dict[str, object]:
             weight = float(beta_dict.get(t, 1.0)) * float(ytn_dict.get(t, 5.0))
             lam_dict[(row["imp"], t)] = float(row["marginal"]) / weight
 
-    # --- Duals: mu (exporter capacity shadow price) ---
-    # Constraint is sum_i x[e,i,t] - Kcap <= 0, so GAMS marginal is
-    # negative when capacity is binding.  Flip sign to get positive rent.
-    mu_dict: Dict[Tuple[str, str], float] = {}
+    # --- Duals: mu_cap (physical capacity scarcity rent) ---
+    mu_cap_dict: Dict[Tuple[str, str], float] = {}
     if eq_cap_rec is not None:
         for _, row in eq_cap_rec.iterrows():
             t = row["T"]
             weight = float(beta_dict.get(t, 1.0)) * float(ytn_dict.get(t, 5.0))
-            mu_dict[(row["exp"], t)] = -float(row["marginal"]) / weight
+            mu_cap_dict[(row["exp"], t)] = -float(row["marginal"]) / weight
 
     obj_total = float(ctx.models["planner"].objective_value)
 
     return {
-        "x":     x_dict,
-        "x_dem": x_dem_dict,
-        "x_man": x_man_dict,
-        "lam":   lam_dict,
-        "mu":    mu_dict,
+        "x":       x_dict,
+        "x_dem":   x_dem_dict,
+        "x_man":   x_man_dict,
+        "lam":     lam_dict,
+        "mu_cap":  mu_cap_dict,
         "obj_total": obj_total,
     }
 
@@ -274,38 +268,24 @@ def extract_llp_state(ctx: ModelContext, data: ModelData) -> Dict[str, object]:
 def build_epec_warmstart(
     state: Dict[str, object],
     data: ModelData,
-    llp_time: str = "2025",
 ) -> Dict[str, Dict]:
-    """Map planner solution into an initial-state dict for the EPEC GS solver.
-
-    Uses 2025 LLP benchmark result and replicates it across all EPEC years.
-    Q_offer is set to actual LLP production (competitive outcome):
-      - Active producers get their LLP output
-      - Non-producing regions get zero (competitive starting point)
-
-    Returns a dict compatible with ``initial_state`` in ``solve_gs_intertemporal``.
-    """
+    """Map planner solution into an initial-state dict for the EPEC GS solver."""
     times = data.times or list(_DEFAULT_TIMES)
 
     x_man_d  = state["x_man"]
     lam_d    = state["lam"]
 
-    # Q_offer  ← actual LLP production from the benchmark year
-    # Non-producing regions start at zero — this is the "defensible" competitive outcome
     Q_offer: Dict[Tuple[str, str], float] = {}
     for r in data.players:
-        llp_prod = x_man_d.get((r, llp_time), 0.0)
         for t in times:
-            Q_offer[(r, t)] = llp_prod
+            Q_offer[(r, t)] = x_man_d.get((r, t), 0.0)
 
-    # p_offer  ← lambda_e from the benchmark (exporter's local value)
     p_offer: Dict[Tuple[str, str, str], float] = {}
     for e in data.regions:
         for i in data.regions:
-            lam_val = lam_d.get((e, llp_time), 0.0)
-            p_val   = max(0.0, lam_val)
             for t in times:
-                p_offer[(e, i, t)] = p_val
+                lam_val = lam_d.get((e, t), 0.0)
+                p_offer[(e, i, t)] = max(0.0, lam_val)
 
     # a_bid  ← a_dem (no demand withholding in warm start)
     a_bid: Dict[Tuple[str, str], float] = {}
@@ -399,25 +379,25 @@ def print_llp_summary(state: Dict[str, object], data: ModelData) -> None:
     x_dict  = state["x"]
     x_dem_d = state["x_dem"]
     x_man_d = state["x_man"]
-    lam_d   = state["lam"]
-    mu_d    = state["mu"]
+    lam_d      = state["lam"]
+    mu_cap_d   = state["mu_cap"]
 
     kcap = data.Kcap_2025 if data.Kcap_2025 is not None else {
         r: float(data.Qcap.get(r, 0.0)) for r in data.regions
     }
 
     print(f"\nObjective value: {state['obj_total']:.2f}")
-    print(f"\n{'':4} {'t':4} {'x_dem':>8} {'x_man':>8} {'Kcap':>8} {'lam':>8} {'mu':>8} {'c_man':>8}")
+    print(f"\n{'':4} {'t':4} {'x_dem':>8} {'x_man':>8} {'Kcap':>8} {'lam':>8} {'mu_cap':>8} {'c_man':>8}")
     print("-" * 64)
     for r in data.regions:
         for t in times:
-            dem = x_dem_d.get((r, t), 0.0)
-            man = x_man_d.get((r, t), 0.0)
-            cap = float(kcap[r])
-            lam = lam_d.get((r, t), 0.0)
-            mu  = mu_d.get((r, t), 0.0)
-            cm  = float(data.c_man[r])
-            print(f"{r:4} {t:4} {dem:8.1f} {man:8.1f} {cap:8.1f} {lam:8.2f} {mu:8.2f} {cm:8.2f}")
+            dem    = x_dem_d.get((r, t), 0.0)
+            man    = x_man_d.get((r, t), 0.0)
+            cap    = float(kcap[r])
+            lam    = lam_d.get((r, t), 0.0)
+            mu_cap = mu_cap_d.get((r, t), 0.0)
+            cm     = float(data.c_man[r])
+            print(f"{r:4} {t:4} {dem:8.1f} {man:8.1f} {cap:8.1f} {lam:8.2f} {mu_cap:8.2f} {cm:8.2f}")
 
     # Trade flow matrix for first period
     t0 = times[0]
@@ -441,8 +421,8 @@ if __name__ == "__main__":
     )
     data = data_prep.load_data_from_excel(input_path)
 
-    print("=== Building LLP Planner (2025 only) ===")
-    ctx = build_llp_planner_model(data, times_override=["2025"])
+    print("=== Building LLP Planner ===")
+    ctx = build_llp_planner_model(data)
 
     print("=== Solving ===")
     solve_llp_planner(ctx, solver="conopt")
@@ -489,10 +469,10 @@ if __name__ == "__main__":
                 for t in times_list:
                     rows_rp.append({
                         "region": r, "t": t,
-                        "x_dem": state["x_dem"].get((r, t), 0.0),
-                        "x_man": state["x_man"].get((r, t), 0.0),
-                        "lam":   state["lam"].get((r, t), 0.0),
-                        "mu":    state["mu"].get((r, t), 0.0),
+                        "x_dem":  state["x_dem"].get((r, t), 0.0),
+                        "x_man":  state["x_man"].get((r, t), 0.0),
+                        "lam":    state["lam"].get((r, t), 0.0),
+                        "mu_cap": state["mu_cap"].get((r, t), 0.0),
                         "Dmax":  float(data.Dmax_t[(r, t)]),
                         "Kcap":  float((data.Kcap_2025 or data.Qcap)[r]),
                         "c_man": float(data.c_man[r]),

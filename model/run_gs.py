@@ -43,7 +43,7 @@ class RunConfig:
     opttol: float = 1e-4
     
     method: str = "gauss_seidel"
-    iters: int = 5
+    iters: int = 10
     omega: float = 0.7
     tol_strat: float = 1e-2
     tol_obj: float = 1e-2
@@ -56,10 +56,6 @@ class RunConfig:
     worker_timeout: float = 120.0
     player_order: List[str] | None = field(default_factory=lambda: ["roa", "af", "row", "us", "eu", "apac", "ch"])
     shuffle_players: bool = False
-    init_scenario: str | None = None
-    warmup_solver: str | None = None
-    warmup_iters: int = 5
-    warmup_workers: int = 1
 
     keep_workdir: bool = False
     debug_workers: bool = False
@@ -74,36 +70,21 @@ class RunConfig:
     rho_prox: float | None = 0.00
     use_quad: bool = True
 
-    # Scenario name (e.g., "high_all", "low_all") to override init_q_offer
-    scenario: str | None = "llp_planner"  # "llp_planner", "2024_actual", "high_all", etc.
+    # Proximal penalty scalars: -0.5 * c_pen * (X - X_last)^2 added to each player's ULP.
+    # Set to 0.0 to disable. Larger values shrink step sizes and improve GS stability.
+    c_pen_q:   float = 0.1   # Q_offer
+    c_pen_cap: float = 0.0   # Icap_pos and Dcap_neg
+    c_pen_p:   float = 0.1   # p_offer (additive on top of rho_prox)
+    c_pen_a:   float = 0.1   # a_bid
 
 
-# Multipliers applied to the base scenario for each time period
-# This allows Q_offer to grow proportionally over time in the initial guess.
-INIT_STRATEGY_MATRIX = {
-    "2025": 1.0,
-    "2030": 1.5,
-    "2035": 2.0,
-    "2040": 2.5,
-}
 
-# Scenario definitions (fractions of Qcap, or exact values if treated differently in loader)
-INIT_SCENARIOS = {
-    "high_all": {"ch": 0.8, "eu": 0.8, "us": 0.8, "apac": 0.8, "roa": 0.8, "row": 0.8},
-    "low_non_ch": {"ch": 0.8, "eu": 0.0, "us": 0.0, "apac": 0.8, "roa": 0.0, "row": 0.0},
-    "low_eu_us_row": {"ch": 0.8, "eu": 0.0, "us": 0.0, "apac": 0.8, "roa": 0.8, "row": 0.0},
-    "mid_all": {"ch": 0.5, "eu": 0.5, "us": 0.5, "apac": 0.5, "roa": 0.5, "row": 0.5},
-    # Assuming regions: ch (China), eu (Europe), us (North America), apac (Malaysia+Vietnam+South Korea+India+Thailand), roa (Rest of Asia), af (not specified but kept at 0.22597), row (Rest of World)
-    "2024_actual": {
-        "ch": 305.1168528, 
-        "eu": 7.210065265, 
-        "us": 7.537795504, 
-        "apac": 5.899144307 + 9.831907179 + 1.638651197 + 11.47055838 + 7.210065265, # MY+VN+KR+IN+TH
-        "roa": 0.22597, 
-        "af": 0.22597, # Using the value originally entered for roa/af as a placeholder if not explicitly given, or 0
-        "row": 96.02496012
-    },
-}
+    # NPV discounting: override beta_t computed in data_prep.py.
+    # 0.0 = undiscounted (block-length weighted); any positive value recomputes beta_t.
+    discount_rate: float = 0.02
+    base_year: int = 2025
+
+
 
 
 def _resolve_excel_path(raw: str | None, default_path: str) -> str:
@@ -231,79 +212,46 @@ def _apply_data_overrides(data, cfg: RunConfig) -> None:
     if cfg.rho_prox is not None:
         data.settings["rho_prox"] = float(cfg.rho_prox)
     data.settings["use_quad"] = bool(cfg.use_quad)
+    # fix_a_bid_to_true_dem=True clamps declared demand to true demand (no strategic withholding).
+    # This override always takes effect; it cannot be disabled via Excel settings.
     data.settings["fix_a_bid_to_true_dem"] = True
 
+    # Proximal penalty scalars — passed through to build_model via data.settings.
+    data.settings["c_pen_q"]   = float(cfg.c_pen_q)
+    data.settings["c_pen_cap"] = float(cfg.c_pen_cap)
+    data.settings["c_pen_p"]   = float(cfg.c_pen_p)
+    data.settings["c_pen_a"]   = float(cfg.c_pen_a)
 
-def _build_initial_state(data, cfg: RunConfig) -> dict[str, dict] | None:
-    scenario_name = cfg.init_scenario if cfg.init_scenario else cfg.scenario
-    if not scenario_name:
-        return None
+    # If RunConfig specifies a non-zero discount_rate, recompute beta_t to override
+    # whatever was loaded from Excel (or the default of 1.0).
+    if cfg.discount_rate != 0.0 or cfg.base_year != 2025:
+        times = data.times or ["2025", "2030", "2035", "2040"]
+        r = float(cfg.discount_rate)
+        by = int(cfg.base_year)
+        data.beta_t = {
+            tp: (1.0 if r == 0.0 else 1.0 / ((1.0 + r) ** (int(tp) - by)))
+            for tp in times
+        }
+
+
+def _build_initial_state(data, cfg: RunConfig) -> dict[str, dict]:
     times = data.times or ["2025", "2030", "2035", "2040"]
-    kcap_init = _it._initial_capacity_path(data, times)
     dK_zero = {(r, t): 0.0 for r in data.regions for t in _it._move_times(times)}
 
-    # ---- LLP Planner warm-start ----
-    if scenario_name == "llp_planner":
-        print("[CONFIG] Solving LLP planner benchmark (2025) for warm start...")
-        llp_ctx = llp.build_llp_planner_model(data, times_override=["2025"])
-        llp.solve_llp_planner(llp_ctx, solver="conopt")
-        llp_state = llp.extract_llp_state(llp_ctx, data)
-        ws = llp.build_epec_warmstart(llp_state, data, llp_time="2025")
-        # Print summary
-        for r in data.players:
-            q_val = ws["Q_offer"].get((r, "2025"), 0.0)
-            print(f"  Q_offer[{r}] = {q_val:.1f}")
-        ws["dK_net"] = dict(dK_zero)
-        print(f"[CONFIG] LLP warm-start ready (replicated across {len(times)} periods)")
-        return ws
-
-    init_q: Dict[Tuple[str, str], float] = {}
-    is_absolute = (scenario_name == "2024_actual")
-    init_q_source = INIT_SCENARIOS.get(scenario_name)
-    if init_q_source is None:
-        raise ValueError(f"Unknown init scenario '{scenario_name}'.")
-    for r in data.players:
-        base_val = float(init_q_source.get(r, 0.8 if not is_absolute else float(data.Qcap.get(r, 0.0))))
-        for t in times:
-            time_mult = INIT_STRATEGY_MATRIX.get(t, 1.0)
-            val = base_val * time_mult
-            
-            if is_absolute:
-                init_q[(r, t)] = val
-            else:
-                init_q[(r, t)] = val * float(data.Qcap[r])
-
-    print(f"[CONFIG] Initial Q_offer matrix created")
+    print("[CONFIG] Solving LLP planner benchmark to compute dynamic warm-start...")
+    llp_ctx = llp.build_llp_planner_model(data)
+    llp.solve_llp_planner(llp_ctx, solver="conopt")
+    llp_state = llp.extract_llp_state(llp_ctx, data)
+    ws = llp.build_epec_warmstart(llp_state, data)
     
-    init_p_offer: Dict[Tuple[str, str, str], float] = {}
-    for ex in data.regions:
-        base_cost = float(data.c_man.get(ex, 0.0))
-        for im in data.regions:
-            for t in times:
-                init_p_offer[(ex, im, t)] = base_cost
-
-    print(f"[CONFIG] Initial p_offer initialized to regional c_man")
-    
-    init_a_bid: Dict[Tuple[str, str], float] = {}
-    if data.a_dem_t is not None:
-        for r in data.regions:
-            for tp in times:
-                init_a_bid[(r, tp)] = float(data.a_dem_t[(r, tp)])
-    else:
-        for r in data.regions:
-            for tp in times:
-                init_a_bid[(r, tp)] = float(data.a_dem.get(r, 0.0))
-
+    # Print summary
     for r in data.players:
-        for t in times:
-            init_q[(r, t)] = min(init_q[(r, t)], float(kcap_init[(r, t)]))
-
-    return {
-        "dK_net": dict(dK_zero),
-        "Q_offer": init_q,
-        "p_offer": init_p_offer,
-        "a_bid": init_a_bid,
-    }
+        q25 = ws["Q_offer"].get((r, times[0]), 0.0)
+        q_end = ws["Q_offer"].get((r, times[-1]), 0.0)
+        print(f"  Q_offer[{r}] ({times[0]}->{times[-1]}) = {q25:.1f} -> {q_end:.1f}")
+    ws["dK_net"] = dict(dK_zero)
+    print(f"[CONFIG] LLP warm-start ready (time-indexed across {len(times)} periods)")
+    return ws
 
 
 def _append_detailed_iter_rows(
@@ -319,7 +267,7 @@ def _append_detailed_iter_rows(
     kcap_map = state.get("Kcap", {})
     dk_map = state.get("dK_net", {})
     lam_map = state.get("lam", {})
-    mu_map = state.get("mu", {})
+    mu_map = state.get("mu_offer", {})
     beta_dem_map = state.get("beta_dem", {})
     psi_dem_map = state.get("psi_dem", {})
     obj_map = state.get("obj", {})
@@ -347,12 +295,20 @@ def _append_detailed_iter_rows(
                 "net_cap_change": _safe_float(dk_map.get((r, t), 0.0)),
                 "Q_offer": _safe_float(q_map.get((r, t))),
                 "lam": _safe_float(lam_map.get((r, t))),
-                "mu": _safe_float(mu_map.get((r, t))),
+                "mu_offer": _safe_float(mu_map.get((r, t))),
                 "beta_dem": _safe_float(beta_dem_map.get((r, t))),
                 "psi_dem": _safe_float(psi_dem_map.get((r, t))),
                 "W_cum": _safe_float(w_cum_map.get((r, t))),
                 "a_bid": _safe_float(a_bid_map.get((r, t), data.a_dem_t.get((r, t)) if data.a_dem_t else data.a_dem.get(r))),
-                "c_man_var": max(max(50.0, data.c_man.get(r, 0.0) * 0.5), data.c_man.get(r, 0.0) - 0.022 * _safe_float(w_cum_map.get((r, t)))),
+                # Use the actual solved c_man_var level.  Fall back to the LBD formula
+                # only when the key is absent (e.g. non-player before first solve).
+                "c_man_var": _safe_float(
+                    c_man_var_map.get((r, t)),
+                    default=max(
+                        max(50.0, data.c_man.get(r, 0.0) * 0.5),
+                        data.c_man.get(r, 0.0) - 0.022 * _safe_float(w_cum_map.get((r, t))),
+                    ),
+                ),
                 "obj": _safe_float(obj_map.get(r)) if r in data.players else 0.0,
             }
             
@@ -487,19 +443,38 @@ def run(cfg: RunConfig) -> str:
         detailed_iter_rows=detailed_iter_rows,
         output_path=output_path,
         meta={
-            "excel_path": excel_path,
-            "method": method,
-            "solver": solver,
-            "feastol": feastol,
-            "opttol": opttol,
-            "iters": iters,
-            "omega": omega,
-            "tol_rel": tol_rel,
-            "stable_iters": stable_iters,
-            "eps_x": float(data.eps_x),
-            "eps_comp": float(data.eps_comp),
-            "workdir": workdir,
-            "solver_options": str(solver_opts),
+            # --- Identity ---
+            "excel_path":            excel_path,
+            "run_id":                run_id,
+            # --- Algorithm ---
+            "method":                method,
+            "iters":                 iters,
+            "omega":                 omega,
+            "tol_rel":               tol_rel,
+            "tol_obj":               float(cfg.tol_obj),
+            "stable_iters":          stable_iters,
+            "convergence_mode":      convergence_mode,
+            # --- Solver ---
+            "solver":                solver,
+            "feastol":               feastol,
+            "opttol":                opttol,
+            "solver_options":        str(solver_opts),
+            # --- Tolerances ---
+            "eps_x":                 float(data.eps_x),
+            "eps_comp":              float(data.eps_comp),
+            # --- Discounting (effective values used in solve) ---
+            "discount_rate":         float(cfg.discount_rate),
+            "base_year":             int(cfg.base_year),
+            "beta_t":                str(data.beta_t or {}),
+            "ytn":                   str(data.years_to_next or {}),
+            # --- Strategic demand bidding ---
+            "fix_a_bid_to_true_dem": bool(data.settings.get("fix_a_bid_to_true_dem", False)),
+            # --- Capacity scalers ---
+            "kappa_q":               float(cfg.kappa_q) if cfg.kappa_q is not None else 0.0,
+            "rho_prox":              float(cfg.rho_prox) if cfg.rho_prox is not None else 0.0,
+            "use_quad":              bool(cfg.use_quad),
+            # --- Paths ---
+            "workdir":               workdir,
         },
     )
 
