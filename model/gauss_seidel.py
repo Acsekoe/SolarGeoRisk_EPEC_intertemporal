@@ -110,10 +110,21 @@ def solve_gs_intertemporal(
 
     theta_obj: Dict[str, float] = {r: 0.0 for r in data.players}
 
-    # c_man_var iterate for non-strategic exporters — initialised to the static base cost
-    # and updated after each player solve from the extracted LBD variable.
+    # c_man_var iterate — initialised from initial_state or static base cost.
     theta_c_man_var: Dict[Tuple[str, str], float] = {
-        (r, tp): float(data.c_man.get(r, 0.0))
+        (r, tp): float(
+            initial_state.get("c_man_var", {}).get((r, tp), data.c_man.get(r, 0.0))
+            if initial_state else data.c_man.get(r, 0.0)
+        )
+        for r in data.regions for tp in times
+    }
+
+    # W_cum iterate — initialised from initial_state or zero.
+    theta_W_cum: Dict[Tuple[str, str], float] = {
+        (r, tp): float(
+            initial_state.get("W_cum", {}).get((r, tp), 0.0)
+            if initial_state else 0.0
+        )
         for r in data.regions for tp in times
     }
 
@@ -202,6 +213,7 @@ def solve_gs_intertemporal(
                 theta_a_bid,
                 player=p,
                 theta_c_man_var=theta_c_man_var,
+                theta_W_cum=theta_W_cum,
             )
             ctx.models[p].solve(**solve_kwargs)
 
@@ -214,13 +226,16 @@ def solve_gs_intertemporal(
             a_bid_sol = state.get("a_bid", {})
             obj_sol = state.get("obj", {})
 
-            # Update c_man_var iterate for all regions from the solved LBD variable.
+            # Update c_man_var and W_cum iterates from the solved LBD variables.
             c_man_var_sol = state.get("c_man_var", {})
+            W_cum_sol = state.get("W_cum", {})
             for r in data.regions:
                 for tp in times:
                     key = (r, tp)
                     if key in c_man_var_sol:
                         theta_c_man_var[key] = float(c_man_var_sol[key])
+                    if key in W_cum_sol:
+                        theta_W_cum[key] = float(W_cum_sol[key])
 
             # Update net capacity changes and recompute the implied stock path.
             for tp in move_times:
