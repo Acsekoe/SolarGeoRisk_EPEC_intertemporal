@@ -81,12 +81,8 @@ class ModelData:
 
     p_offer_ub: Dict[Tuple[str, str], float]
 
-    rho_p: Dict[str, float]
-
     eps_x: float
     eps_comp: float
-
-    kappa_Q: Dict[str, float] | None = None
     settings: Dict[str, object] | None = None
 
     # --- Intertemporal extensions ---
@@ -101,7 +97,10 @@ class ModelData:
     Kcap_2025: Dict[str, float] | None = None  # fallback to Qcap
 
     # Max capacity expansion/decommission rates (g_exp, g_dec)
+    # g_exp_ub is interpreted as absolute GW/year when g_exp_ub_is_absolute=True,
+    # otherwise as a per-year rate multiplied by current Kcap.
     g_exp_ub: Dict[str, float] | None = None
+    g_exp_ub_is_absolute: bool = False
     g_dec_ub: Dict[str, float] | None = None
 
     # Capacity costs
@@ -333,7 +332,9 @@ def validate_strategy_inputs(
             for tp in move_times:
                 d_val = float(theta_dK_net.get((r, tp), 0.0))
                 k_val = max(float(implied_kcap.get((r, tp), kcap_init[r])), 0.0)
-                exp_lim = float((data.g_exp_ub or {}).get(r, 0.1)) * k_val
+                exp_lim = float((data.g_exp_ub or {}).get(r, 0.1))
+                if not bool(getattr(data, "g_exp_ub_is_absolute", False)):
+                    exp_lim *= k_val
                 dec_lim = float((data.g_dec_ub or {}).get(r, 0.1)) * k_val
                 if d_val > exp_lim + 1e-9:
                     warnings.warn(
@@ -489,10 +490,7 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
             for r in data.regions for i in data.regions
         ],
     )
-    rho_p_p = Parameter(
-        m, "rho_p", domain=[R],
-        records=[(r, data.rho_p[r]) for r in data.regions],
-    )
+    # Deleted rho_p_p parameter here
 
     # Time-indexed demand params [R, T]
     a_dem_t_p = Parameter(
@@ -553,23 +551,15 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
     eps_comp = float(data.eps_comp)
     eps_value = gp.Number(eps_comp)
 
-    rho_prox_val = float(settings.get("rho_prox", 0.0))
-    rho_prox = gp.Number(rho_prox_val)
-
-    # c_pen_* proximal penalty scalars (controllable from run_gs.py via settings).
-    # Each penalises the squared deviation of the strategic variable from its
-    # previous Gauss-Seidel iterate: -0.5 * c_pen * (X - X_last)^2
-    c_pen_q   = gp.Number(float(settings.get("c_pen_q",   0.0)))  # Q_offer
-    c_pen_cap = gp.Number(float(settings.get("c_pen_cap", 0.0)))  # Icap_pos & Dcap_neg
-    c_pen_p   = gp.Number(float(settings.get("c_pen_p",   0.0)))  # p_offer (supplements rho_prox)
-    c_pen_a   = gp.Number(float(settings.get("c_pen_a",   0.0)))  # a_bid
-
-    kappa_map = getattr(data, "kappa_Q", None) or {}
-    kappa_by_r = {k: float(kappa_map.get(k, 0.0)) for k in data.regions}
-    kappa_Q = Parameter(
-        m, "kappa_Q", domain=[R],
-        records=[(k, kappa_by_r[k]) for k in data.regions],
-    )
+    # Algorithmic proximal penalties (solver stabilization)
+    c_pen_q = gp.Number(float(settings.get("c_pen_q", 0.0)))
+    c_pen_p = gp.Number(float(settings.get("c_pen_p", 0.0)))
+    c_pen_a = gp.Number(float(settings.get("c_pen_a", 0.0)))
+    
+    # Economic quadratic penalties (convex costs / disutility)
+    c_quad_q = gp.Number(float(settings.get("c_quad_q", 0.0)))
+    c_quad_p = gp.Number(float(settings.get("c_quad_p", 0.0)))
+    c_quad_a = gp.Number(float(settings.get("c_quad_a", 0.0)))
 
     # Proximal reference parameters — updated by gauss_seidel before each player solve.
     p_offer_last  = Parameter(m, "p_offer_last",  domain=[exp, imp, T])
@@ -787,7 +777,10 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
         eq_kcap_transitions[tp_next] = eq_kcap_trans
 
         eq_iub = Equation(m, f"eq_icap_ub_{tp}", domain=[R])
-        eq_iub[R] = Icap_pos[R, tp] <= g_exp_p[R] * Kcap[R, tp]
+        if bool(getattr(data, "g_exp_ub_is_absolute", False)):
+            eq_iub[R] = Icap_pos[R, tp] <= g_exp_p[R]
+        else:
+            eq_iub[R] = Icap_pos[R, tp] <= g_exp_p[R] * Kcap[R, tp]
         eq_icap_ub[tp] = eq_iub
 
         eq_dub = Equation(m, f"eq_dcap_ub_{tp}", domain=[R])
@@ -882,14 +875,26 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
 
 
         # ---- Penalties (replicated per period) ----
-        pen_p_offer_quad = Sum(
+        # Economic quadratic penalties (convex costs / disutility)
+        pen_quad_q = Sum(
             T,
-            -gp.Number(0.5) * ytn_p[T] * rho_p_p[r] * Sum(j, p_offer[r, j, T] * p_offer[r, j, T]),
+            -gp.Number(0.5) * beta_p[T] * ytn_p[T] * c_quad_q * Q_offer[r, T] * Q_offer[r, T],
         )
 
+        pen_quad_p = Sum(
+            T,
+            -gp.Number(0.5) * beta_p[T] * ytn_p[T] * c_quad_p * Sum(j, p_offer[r, j, T] * p_offer[r, j, T]),
+        )
+
+        pen_quad_a = Sum(
+            T,
+            -gp.Number(0.5) * beta_p[T] * ytn_p[T] * c_quad_a * (a_dem_t_p[r, T] - a_bid[r, T]) * (a_dem_t_p[r, T] - a_bid[r, T]),
+        )
+
+        # Algorithmic proximal penalties (solver stabilization)
         pen_prox_poffer = Sum(
             T,
-            -gp.Number(0.5) * (rho_prox + c_pen_p) * Sum(
+            -gp.Number(0.5) * beta_p[T] * ytn_p[T] * c_pen_p * Sum(
                 j,
                 (p_offer[r, j, T] - p_offer_last[r, j, T])
                 * (p_offer[r, j, T] - p_offer_last[r, j, T]),
@@ -898,28 +903,14 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
 
         pen_prox_q = Sum(
             T,
-            -gp.Number(0.5) * c_pen_q
+            -gp.Number(0.5) * beta_p[T] * ytn_p[T] * c_pen_q
             * (Q_offer[r, T] - Q_offer_last[r, T])
             * (Q_offer[r, T] - Q_offer_last[r, T]),
         )
 
-        pen_prox_icap = Sum(
-            T,
-            -gp.Number(0.5) * c_pen_cap
-            * (Icap_pos[r, T] - Icap_pos_last[r, T])
-            * (Icap_pos[r, T] - Icap_pos_last[r, T]),
-        )
-
-        pen_prox_dcap = Sum(
-            T,
-            -gp.Number(0.5) * c_pen_cap
-            * (Dcap_neg[r, T] - Dcap_neg_last[r, T])
-            * (Dcap_neg[r, T] - Dcap_neg_last[r, T]),
-        )
-
         pen_prox_a = Sum(
             T,
-            -gp.Number(0.5) * c_pen_a
+            -gp.Number(0.5) * beta_p[T] * ytn_p[T] * c_pen_a
             * (a_bid[r, T] - a_bid_last[r, T])
             * (a_bid[r, T] - a_bid_last[r, T]),
         )
@@ -929,11 +920,11 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
             d_surplus_t
             + producer_term_t
             + capacity_cost_t
-            + pen_p_offer_quad
+            + pen_quad_q
+            + pen_quad_p
+            + pen_quad_a
             + pen_prox_poffer
             + pen_prox_q
-            + pen_prox_icap
-            + pen_prox_dcap
             + pen_prox_a
         )
 
@@ -962,8 +953,6 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
             "c_man_floor": c_man_floor_p,
             "c_ship": c_ship,
             "p_offer_ub": p_offer_ub_p,
-            "rho_p": rho_p_p,
-            "kappa_Q": kappa_Q,
             "g_exp": g_exp_p,
             "g_dec": g_dec_p,
             "f_hold": f_hold_p,
@@ -1041,10 +1030,23 @@ def apply_player_fixings(
             if r == player:
                 # Active player: Icap_pos and Dcap_neg are free decision variables.
                 # Terminal period is already fixed to 0 via .fx in build_model.
+                # IMPORTANT: set explicit .up from data bounds so that ipopt
+                # respects the capacity-rate limits even on early termination
+                # (equation constraints alone are insufficient for MPECs).
+                if is_terminal or tp not in move_times:
+                    icap_ub = 0.0
+                    dcap_ub = 0.0
+                else:
+                    g_exp = float((data.g_exp_ub or {}).get(r, 0.0))
+                    if not bool(getattr(data, "g_exp_ub_is_absolute", False)):
+                        g_exp *= max(float(implied_kcap.get((r, tp), 0.0)), 0.0)
+                    icap_ub = g_exp
+                    g_dec = float((data.g_dec_ub or {}).get(r, 1.0))
+                    dcap_ub = g_dec * max(float(implied_kcap.get((r, tp), 0.0)), 0.0)
                 Icap_pos.lo[r, tp] = 0.0
-                Icap_pos.up[r, tp] = 0.0 if is_terminal else float("inf")
+                Icap_pos.up[r, tp] = icap_ub
                 Dcap_neg.lo[r, tp] = 0.0
-                Dcap_neg.up[r, tp] = 0.0 if is_terminal else float("inf")
+                Dcap_neg.up[r, tp] = dcap_ub
                 Q_offer.lo[r, tp] = 0.0
                 Q_offer.up[r, tp] = float("inf")
 

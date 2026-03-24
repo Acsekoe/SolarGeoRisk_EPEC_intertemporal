@@ -1,5 +1,5 @@
-﻿from .gauss_seidel import solve_gs
+from .gauss_seidel import solve_gs_intertemporal
 
 __all__ = [
-    "solve_gs",
+    "solve_gs_intertemporal",
 ]

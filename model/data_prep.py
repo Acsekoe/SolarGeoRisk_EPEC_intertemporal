@@ -5,7 +5,10 @@ from typing import Dict, List, Tuple
 
 import pandas as pd
 
-from model_main import ModelData
+try:
+    from .model_main import ModelData
+except ImportError:
+    from model_main import ModelData
 
 
 def _require_columns(df: pd.DataFrame, cols: List[str], sheet: str) -> None:
@@ -18,6 +21,21 @@ def _norm_region(value) -> str:
     if pd.isna(value):
         return ""
     return str(value).strip().lower()
+
+
+def _resolve_region_alias(code: str, valid_regions: set[str]) -> str:
+    """Resolve known region aliases to whichever code exists in valid_regions."""
+    if not code:
+        return code
+    if code in valid_regions:
+        return code
+
+    # Treat APAC and ROA as equivalent labels and map to the configured region set.
+    if code == "roa" and "apac" in valid_regions:
+        return "apac"
+    if code == "apac" and "roa" in valid_regions:
+        return "roa"
+    return code
 
 
 def _get_optional_float(row: pd.Series, col: str, default: float) -> float:
@@ -131,6 +149,7 @@ def load_data_from_excel(path: str) -> ModelData:
     regions = [r for r in regions if r]
     if not regions:
         raise ValueError("No regions found in sheet 'regions'.")
+    region_set = set(regions)
 
     # params_region
     try:
@@ -147,9 +166,9 @@ def load_data_from_excel(path: str) -> ModelData:
         "c_hold_musd_per_gw_per_yr": "f_hold (USD/kW)",
         "kcap_2025_gw": "Kcap_2025",
         "g_exp_ub_per_yr": "g_exp_ub",
+        "g_exp_ub_per_yr_gw": "g_exp_ub_per_yr_gw",
         "g_dec_ub_per_yr": "g_dec_ub",
         "p_offer_max_usd_per_kw": "p_offer_max",
-        "rho_p_scalar": "rho_p",
         "p_full_usd_per_kw": "p_full",
         "eps_abs_base_scalar": "eps_abs_base",
     }
@@ -168,7 +187,9 @@ def load_data_from_excel(path: str) -> ModelData:
         raise ValueError("Missing demand-cap column in sheet 'params_region'. Add 'Dmax' or legacy 'D'.")
 
     df_params = df_params.copy()
-    df_params["r"] = df_params["r"].map(_norm_region)
+    df_params["r"] = df_params["r"].map(
+        lambda v: _resolve_region_alias(_norm_region(v), region_set)
+    )
     df_params = df_params[df_params["r"].isin(regions)]
 
     row_map: Dict[str, pd.Series] = {}
@@ -255,8 +276,14 @@ def load_data_from_excel(path: str) -> ModelData:
     df_ship = df_ship.copy()
     first_col = df_ship.columns[0]
     df_ship = df_ship.rename(columns={first_col: "exporter"})
-    df_ship["exporter"] = df_ship["exporter"].map(_norm_region)
-    importers = [str(c).strip().lower() for c in df_ship.columns if c != "exporter"]
+    df_ship["exporter"] = df_ship["exporter"].map(
+        lambda v: _resolve_region_alias(_norm_region(v), region_set)
+    )
+    importers = [
+        _resolve_region_alias(_norm_region(c), region_set)
+        for c in df_ship.columns
+        if c != "exporter"
+    ]
     df_ship.columns = ["exporter"] + importers
 
     missing_cols = [r for r in regions if r not in importers]
@@ -296,7 +323,6 @@ def load_data_from_excel(path: str) -> ModelData:
         settings[key] = row["value"]
 
     p_offer_max_default = _get_setting_float(settings, "p_offer_max", 200.0)
-    rho_p_default = _get_setting_float(settings, "rho_p", 1e-3)
     eps_comp = _get_setting_float(settings, "eps_comp", 1e-6)
     eps_x = _get_setting_float(settings, "eps_x", 1e-3)
     # Discount rate for NPV computation.  0.0 = undiscounted (block-length weighting only).
@@ -308,43 +334,45 @@ def load_data_from_excel(path: str) -> ModelData:
     if players_raw is not None and str(players_raw).strip():
         seen = set()
         for t in [t.strip().lower() for t in str(players_raw).split(",")]:
+            t = _resolve_region_alias(t, region_set)
             if t in regions and t not in seen:
                 players_list.append(t)
                 seen.add(t)
     if not players_list:
         players_list = list(regions)
 
-    rho_p: Dict[str, float] = {}
     p_offer_max: Dict[str, float] = {}
-    kappa_Q: Dict[str, float] = {r: 0.0 for r in regions}
     
     g_exp_ub: Dict[str, float] = {}
+    g_exp_ub_is_absolute = False
     g_dec_ub: Dict[str, float] = {}
     f_hold: Dict[str, float] = {}
     c_inv: Dict[str, float] = {}
     Kcap_2025: Dict[str, float] = {}
 
-    kappa_col = next((c for c in df_params.columns if str(c).strip().lower() == "kappa_q"), None)
-    if kappa_col is not None:
-        for r in regions:
-            row = row_map[r]
-            value = row[kappa_col]
-            value_f = 0.0 if pd.isna(value) else float(value)
-            kappa_Q[r] = value_f
 
-    col_rho_p = _find_col(df_params, ["rho_p (scalar)", "rho_p"])
+
     col_p_offer_max = _find_col(df_params, ["p_offer_max (USD/kW)", "p_offer_max"])
-    col_g_exp = _find_col(df_params, ["g_exp_ub (rate/yr)", "g_exp_ub (%/yr)", "g_exp_ub"])
+    col_g_exp_abs = _find_col(
+        df_params,
+        ["g_exp_ub_per_yr_gw", "g_exp_ub (GW/yr)", "g_exp_ub_gw_per_yr"],
+    )
+    col_g_exp_rate = _find_col(df_params, ["g_exp_ub (rate/yr)", "g_exp_ub (%/yr)", "g_exp_ub"])
     col_g_dec = _find_col(df_params, ["g_dec_ub (rate/yr)", "g_dec_ub (%/yr)", "g_dec_ub"])
     col_f_hold = _find_col(df_params, ["f_hold (mUSD/GW-yr)", "f_hold (USD/kW/yr)", "f_hold (USD/kW)", "f_hold"])
     col_c_inv = _find_col(df_params, ["c_inv (mUSD/GW-yr)", "c_inv (USD/kW/yr)", "c_inv (USD/kW)", "c_inv"])
 
+    if col_g_exp_abs is not None:
+        g_exp_ub_is_absolute = True
+
     for r in regions:
         row = row_map[r]
-        rho_p[r] = _opt_float(row, col_rho_p, float(rho_p_default)) if col_rho_p else float(rho_p_default)
         p_offer_max[r] = _opt_float(row, col_p_offer_max, p_offer_max_default) if col_p_offer_max else p_offer_max_default
         
-        g_exp_ub[r] = _opt_float(row, col_g_exp, 0.05) if col_g_exp else 0.05
+        if g_exp_ub_is_absolute:
+            g_exp_ub[r] = _opt_float(row, col_g_exp_abs, 0.0)
+        else:
+            g_exp_ub[r] = _opt_float(row, col_g_exp_rate, 0.05) if col_g_exp_rate else 0.05
         g_dec_ub[r] = _opt_float(row, col_g_dec, 0.05) if col_g_dec else 0.05
         f_hold[r] = _opt_float(row, col_f_hold, 0.0) if col_f_hold else 0.0
         c_inv[r] = _opt_float(row, col_c_inv, 0.0) if col_c_inv else 0.0
@@ -431,7 +459,10 @@ def load_data_from_excel(path: str) -> ModelData:
         
     _print_stats("c_inv", c_inv)
     _print_stats("f_hold", f_hold)
-    _print_stats("g_exp_ub", g_exp_ub)
+    if g_exp_ub_is_absolute:
+        _print_stats("g_exp_ub_abs (GW/yr)", g_exp_ub)
+    else:
+        _print_stats("g_exp_ub_rate (1/yr)", g_exp_ub)
     _print_stats("g_dec_ub", g_dec_ub)
 
     return ModelData(
@@ -448,13 +479,12 @@ def load_data_from_excel(path: str) -> ModelData:
         
         # New components
         p_offer_ub=p_offer_ub,
-        rho_p=rho_p,
         g_exp_ub=g_exp_ub,
+        g_exp_ub_is_absolute=g_exp_ub_is_absolute,
         g_dec_ub=g_dec_ub,
         
         eps_x=float(eps_x),
         eps_comp=float(eps_comp),
-        kappa_Q=kappa_Q,
         settings=settings,
         times=list(_TIMES),
         Dmax_t=Dmax_t,

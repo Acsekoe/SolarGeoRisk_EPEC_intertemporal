@@ -3,7 +3,10 @@ from __future__ import annotations
 import random
 from typing import Callable, Dict, List, Tuple
 
-import model_main as _it
+try:
+    from . import model_main as _it
+except ImportError:
+    import model_main as _it
 
 
 def solve_gs_intertemporal(
@@ -21,6 +24,8 @@ def solve_gs_intertemporal(
     convergence_mode: str = "strategy",
     tol_obj: float = 1e-6,
     shuffle_players: bool = False,
+    player_order: List[str] | None = None,
+    force_ch_last: bool = True,
 ) -> tuple[Dict[str, Dict], List[Dict[str, object]]]:
     """Gauss-Seidel solver for the 4-period intertemporal EPEC Offer model.
 
@@ -35,6 +40,21 @@ def solve_gs_intertemporal(
         raise ValueError("tol_rel must be > 0")
     if stable_iters < 1:
         raise ValueError("stable_iters must be >= 1")
+
+    if player_order is not None:
+        normalized = [str(p).strip().lower() for p in player_order if str(p).strip()]
+        unknown = sorted(set(normalized) - set(data.players))
+        missing = [p for p in data.players if p not in normalized]
+        duplicates = sorted({p for p in normalized if normalized.count(p) > 1})
+        if unknown:
+            raise ValueError(f"player_order contains unknown players: {unknown}. Valid players: {data.players}")
+        if missing:
+            raise ValueError(f"player_order missing players: {missing}. Valid players: {data.players}")
+        if duplicates:
+            raise ValueError(f"player_order contains duplicates: {duplicates}")
+        base_order = normalized
+    else:
+        base_order = list(data.players)
 
     times: List[str] = data.times or ["2025", "2030", "2035", "2040"]
     move_times = _it._move_times(times)
@@ -104,7 +124,9 @@ def solve_gs_intertemporal(
         return max(float(init_kcap.get(r, 0.0)), 1.0)
 
     def _dk_scale(r: str) -> float:
-        exp_scale = float((data.g_exp_ub or {}).get(r, 0.0)) * float(init_kcap.get(r, 0.0))
+        exp_scale = float((data.g_exp_ub or {}).get(r, 0.0))
+        if not bool(getattr(data, "g_exp_ub_is_absolute", False)):
+            exp_scale *= float(init_kcap.get(r, 0.0))
         dec_scale = float((data.g_dec_ub or {}).get(r, 0.0)) * float(init_kcap.get(r, 0.0))
         return max(exp_scale, dec_scale, 1.0)
 
@@ -163,12 +185,12 @@ def solve_gs_intertemporal(
         prev_a_bid = dict(theta_a_bid)
         prev_obj = dict(theta_obj)
 
-        sweep_order = list(data.players)
+        sweep_order = list(base_order)
         if shuffle_players:
             random.shuffle(sweep_order)
 
-        # Ensure China plays last
-        if "ch" in sweep_order:
+        # Optional legacy behavior to keep China last.
+        if force_ch_last and "ch" in sweep_order:
             sweep_order.remove("ch")
             sweep_order.append("ch")
 
@@ -288,4 +310,3 @@ def solve_gs_intertemporal(
             break
 
     return last_state, iter_rows
-

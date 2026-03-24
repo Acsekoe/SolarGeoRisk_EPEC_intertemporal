@@ -4,7 +4,11 @@ import os
 from typing import Dict, List, Any
 
 import pandas as pd
-from model_main import ModelData
+
+try:
+    from .model_main import ModelData
+except ImportError:
+    from model_main import ModelData
 
 
 def _safe_get(d: Dict, k, default=0.0) -> float:

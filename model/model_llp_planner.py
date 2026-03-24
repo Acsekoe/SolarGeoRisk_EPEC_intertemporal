@@ -31,7 +31,10 @@ from gamspy import (
 )
 
 # Re-use existing data structures
-from model_main import ModelData, ModelContext
+try:
+    from .model_main import ModelContext, ModelData
+except ImportError:
+    from model_main import ModelContext, ModelData
 
 
 # =====================================================================
@@ -413,7 +416,10 @@ def print_llp_summary(state: Dict[str, object], data: ModelData) -> None:
 #  CLI entry point
 # =====================================================================
 if __name__ == "__main__":
-    import data_prep
+    try:
+        from . import data_prep
+    except ImportError:
+        import data_prep
 
     script_dir = os.path.dirname(os.path.abspath(__file__))
     input_path = os.path.normpath(

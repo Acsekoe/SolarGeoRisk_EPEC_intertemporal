@@ -2,30 +2,27 @@ from __future__ import annotations
 
 import os
 import shutil
-import sys
 import tempfile
 import time
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Dict, List
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
-
-# Set PYTHONPATH so parallel workers (spawned subprocesses) can find the package
-src_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src"))
-if "PYTHONPATH" in os.environ:
-    if src_path not in os.environ["PYTHONPATH"]:
-        os.environ["PYTHONPATH"] = src_path + os.pathsep + os.environ["PYTHONPATH"]
-else:
-    os.environ["PYTHONPATH"] = src_path
-
-from data_prep import load_data_from_excel
-from gauss_seidel import solve_gs_intertemporal
-import model_llp_planner as llp
-import model_main as _it
-from plot_results import write_default_plots
-from results_writer import write_results_excel
+try:
+    from .data_prep import load_data_from_excel
+    from .gauss_seidel import solve_gs_intertemporal
+    from . import model_llp_planner as llp
+    from . import model_main as _it
+    from .plot_results import write_default_plots
+    from .results_writer import write_results_excel
+except ImportError:
+    from data_prep import load_data_from_excel
+    from gauss_seidel import solve_gs_intertemporal
+    import model_llp_planner as llp
+    import model_main as _it
+    from plot_results import write_default_plots
+    from results_writer import write_results_excel
 
 
 # Define project root relative to this script
@@ -52,30 +49,28 @@ class RunConfig:
     eps_comp: float = 1
     workdir: str | None = None
     convergence_mode: str = "combined"  # "strategy", "objective", or "combined"
-    workers: int = 1  # 1=sequential, >1=parallel
-    worker_timeout: float = 120.0
-    player_order: List[str] | None = field(default_factory=lambda: ["roa", "af", "row", "us", "eu", "apac", "ch"])
+    player_order: List[str] | None = None  # None -> data.players order from input workbook
     shuffle_players: bool = False
+    force_ch_last: bool = True  # Keeps legacy ordering unless explicitly disabled
 
     keep_workdir: bool = False
-    debug_workers: bool = False
 
     knitro_outlev: int | None = None
     knitro_maxit: int | None = None
     knitro_hessopt: int | None = None
     knitro_algorithm: int | None = None
 
-    # Scalers
-    kappa_q: float | None = 0.1
-    rho_prox: float | None = 0.00
-    use_quad: bool = True
-
-    # Proximal penalty scalars: -0.5 * c_pen * (X - X_last)^2 added to each player's ULP.
+    # Algorithmic proximal penalties: -0.5 * c_pen * (X - X_last)^2 added to ULP objective.
     # Set to 0.0 to disable. Larger values shrink step sizes and improve GS stability.
-    c_pen_q:   float = 0.1   # Q_offer
-    c_pen_cap: float = 0.0   # Icap_pos and Dcap_neg
-    c_pen_p:   float = 0.1   # p_offer (additive on top of rho_prox)
-    c_pen_a:   float = 0.1   # a_bid
+    c_pen_q: float = 0.0   # For Q_offer
+    c_pen_p: float = 0.1   # For p_offer
+    c_pen_a: float = 0.1   # For a_bid
+
+    # Economic quadratic penalties: -0.5 * c_quad * X^2
+    # Represents convex costs or disutility.
+    c_quad_q: float = 0.1  # For Q_offer (production cost)
+    c_quad_p: float = 0.1  # For p_offer (offer deviation)
+    c_quad_a: float = 0.1  # For a_bid (demand withholding cost)
 
 
 
@@ -156,6 +151,9 @@ def _print_state_summary(*, data: ModelData, regions: list[str], state: dict[str
 
 
 def _gams_workdir(run_id: str, configured_workdir: str | None) -> str:
+    # The current GS solver builds one shared GAMS container up front.
+    # It still benefits from an explicit space-free workdir, but this is
+    # per solve, not per player or per iteration.
     if configured_workdir and configured_workdir.strip():
         workdir = os.path.abspath(configured_workdir.strip())
     else:
@@ -203,24 +201,22 @@ def _apply_data_overrides(data, cfg: RunConfig) -> None:
     data.eps_x = float(cfg.eps_x)
     data.eps_comp = float(cfg.eps_comp)
 
-    if cfg.kappa_q is not None and data.kappa_Q is not None:
-        for r in data.regions:
-            data.kappa_Q[r] = float(cfg.kappa_q)
-
     if data.settings is None:
         data.settings = {}
-    if cfg.rho_prox is not None:
-        data.settings["rho_prox"] = float(cfg.rho_prox)
-    data.settings["use_quad"] = bool(cfg.use_quad)
+
     # fix_a_bid_to_true_dem=True clamps declared demand to true demand (no strategic withholding).
     # This override always takes effect; it cannot be disabled via Excel settings.
     data.settings["fix_a_bid_to_true_dem"] = True
 
     # Proximal penalty scalars — passed through to build_model via data.settings.
     data.settings["c_pen_q"]   = float(cfg.c_pen_q)
-    data.settings["c_pen_cap"] = float(cfg.c_pen_cap)
     data.settings["c_pen_p"]   = float(cfg.c_pen_p)
     data.settings["c_pen_a"]   = float(cfg.c_pen_a)
+    
+    # Economic quadratic scalars
+    data.settings["c_quad_q"]  = float(cfg.c_quad_q)
+    data.settings["c_quad_p"]  = float(cfg.c_quad_p)
+    data.settings["c_quad_a"]  = float(cfg.c_quad_a)
 
     # If RunConfig specifies a non-zero discount_rate, recompute beta_t to override
     # whatever was loaded from Excel (or the default of 1.0).
@@ -369,9 +365,12 @@ def run(cfg: RunConfig) -> str:
     print(f"[CONFIG] iters={iters} omega={omega:g} tol_rel={tol_rel:g} stable_iters={stable_iters}")
     print(f"[CONFIG] eps_x={float(data.eps_x):g} eps_comp={float(data.eps_comp):g}")
     print(f"[CONFIG] convergence_mode={convergence_mode}")
+    if cfg.player_order:
+        print(f"[CONFIG] player_order={cfg.player_order}")
+    else:
+        print(f"[CONFIG] player_order=<from input data: {data.players}>")
+    print(f"[CONFIG] shuffle_players={cfg.shuffle_players} force_ch_last={cfg.force_ch_last}")
     print(f"[CONFIG] workdir={workdir}{' (keep)' if cfg.keep_workdir else ' (auto-cleanup)'}")
-    if cfg.workers != 1:
-        print(f"[WARN] workers={cfg.workers} requested, but run_gs currently executes sequential GS only.")
 
     sweep_times: list[float] = []
     timing_state = {"sweep_start": 0.0}
@@ -394,10 +393,6 @@ def run(cfg: RunConfig) -> str:
             rows=detailed_iter_rows,
         )
         timing_state["sweep_start"] = time.perf_counter()
-
-    if cfg.debug_workers and cfg.knitro_outlev is None and solver.strip().lower() == "knitro":
-        # Keep debug mode behavior from previous script.
-        cfg = dataclass_replace(cfg, knitro_outlev=1)
 
     solver_opts = _solver_options(
         solver=solver,
@@ -427,6 +422,8 @@ def run(cfg: RunConfig) -> str:
             initial_state=init_state,
             convergence_mode=convergence_mode,
             shuffle_players=cfg.shuffle_players,
+            player_order=cfg.player_order,
+            force_ch_last=cfg.force_ch_last,
         )
     finally:
         total_elapsed = time.perf_counter() - total_start
@@ -469,10 +466,13 @@ def run(cfg: RunConfig) -> str:
             "ytn":                   str(data.years_to_next or {}),
             # --- Strategic demand bidding ---
             "fix_a_bid_to_true_dem": bool(data.settings.get("fix_a_bid_to_true_dem", False)),
-            # --- Capacity scalers ---
-            "kappa_q":               float(cfg.kappa_q) if cfg.kappa_q is not None else 0.0,
-            "rho_prox":              float(cfg.rho_prox) if cfg.rho_prox is not None else 0.0,
-            "use_quad":              bool(cfg.use_quad),
+            # --- Penalties and Scalers ---
+            "c_pen_q":               float(cfg.c_pen_q),
+            "c_pen_p":               float(cfg.c_pen_p),
+            "c_pen_a":               float(cfg.c_pen_a),
+            "c_quad_q":              float(cfg.c_quad_q),
+            "c_quad_p":              float(cfg.c_quad_p),
+            "c_quad_a":              float(cfg.c_quad_a),
             # --- Paths ---
             "workdir":               workdir,
         },
@@ -494,12 +494,6 @@ def run(cfg: RunConfig) -> str:
         print(f"[KEEP] Workdir retained: {workdir}")
 
     return output_path
-
-
-def dataclass_replace(cfg: RunConfig, **kwargs) -> RunConfig:
-    values = dict(cfg.__dict__)
-    values.update(kwargs)
-    return RunConfig(**values)
 
 
 def main() -> None:
