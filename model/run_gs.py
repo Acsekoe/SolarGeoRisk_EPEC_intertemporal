@@ -46,7 +46,7 @@ class RunConfig:
     tol_obj: float = 1e-2
     stable_iters: int = 3
     eps_x: float = 1e-3
-    eps_comp: float = 1
+    eps_comp: float = 0.0
     workdir: str | None = None
     convergence_mode: str = "combined"  # "strategy", "objective", or "combined"
     player_order: List[str] | None = None  # None -> data.players order from input workbook
@@ -62,7 +62,7 @@ class RunConfig:
 
     # Algorithmic proximal penalties: -0.5 * c_pen * (X - X_last)^2 added to ULP objective.
     # Set to 0.0 to disable. Larger values shrink step sizes and improve GS stability.
-    c_pen_q: float = 0.0   # For Q_offer
+    c_pen_q: float = 0.1   # For Q_offer
     c_pen_p: float = 0.1   # For p_offer
     c_pen_a: float = 0.1   # For a_bid
 
@@ -104,7 +104,7 @@ def _safe_float(v: object, default: float = 0.0) -> float:
 
 
 
-def _print_state_summary(*, data: ModelData, regions: list[str], state: dict[str, dict], tag: str = "SUMMARY") -> None:
+def _print_state_summary(*, data: _it.ModelData, regions: list[str], state: dict[str, dict], tag: str = "SUMMARY") -> None:
     kcap = state.get("Kcap", {}) or {}
     dk_map = state.get("dK_net", {}) or {}
     q_offer = state.get("Q_offer", {}) or {}
@@ -217,6 +217,9 @@ def _apply_data_overrides(data, cfg: RunConfig) -> None:
     data.settings["c_quad_q"]  = float(cfg.c_quad_q)
     data.settings["c_quad_p"]  = float(cfg.c_quad_p)
     data.settings["c_quad_a"]  = float(cfg.c_quad_a)
+
+    # Discount rate for terminal salvage value
+    data.settings["discount_rate"] = float(cfg.discount_rate)
 
     # If RunConfig specifies a non-zero discount_rate, recompute beta_t to override
     # whatever was loaded from Excel (or the default of 1.0).
