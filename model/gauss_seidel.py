@@ -56,7 +56,7 @@ def solve_gs_intertemporal(
     else:
         base_order = list(data.players)
 
-    times: List[str] = data.times or ["2025", "2030", "2035", "2040"]
+    times: List[str] = data.times or ["2025", "2030", "2035", "2040", "2045"]
     move_times = _it._move_times(times)
     init_kcap = _it._initial_capacity_by_region(data)
     fix_a_bid = _it._fix_a_bid_to_true_dem(data)

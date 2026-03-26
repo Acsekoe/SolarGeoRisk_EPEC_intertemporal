@@ -2,7 +2,7 @@
 Intertemporal (4-period) perfect-foresight EPEC model using Offer-Based Uniform-Price Settlement.
 
 Each strategic player maximises the present-value sum of welfare across
-T = {"2025", "2030", "2035", "2040"}, subject to per-period LLP KKT
+T = {"2025", "2030", "2035", "2040", "2045"}, subject to per-period LLP KKT
 conditions, dynamic capacity transitions, and offer price decisions.
 
 Discounting
@@ -57,8 +57,8 @@ from gamspy import (
 
 z = gp.Number(0)
 
-_DEFAULT_TIMES = ["2025", "2030", "2035", "2040"]
-_DEFAULT_YTN = {"2025": 5.0, "2030": 5.0, "2035": 5.0, "2040": 5.0}
+_DEFAULT_TIMES = ["2025", "2030", "2035", "2040", "2045"]
+_DEFAULT_YTN = {"2025": 5.0, "2030": 5.0, "2035": 5.0, "2040": 5.0, "2045": 5.0}
 
 
 # =============================================================================
@@ -562,9 +562,6 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
     c_quad_p = gp.Number(float(settings.get("c_quad_p", 0.0)))
     c_quad_a = gp.Number(float(settings.get("c_quad_a", 0.0)))
 
-    # Terminal salvage: discount rate for perpetuity factor (1/r)
-    _discount_rate = float(settings.get("discount_rate", 0.02))
-
     # Proximal reference parameters — updated by gauss_seidel before each player solve.
     p_offer_last  = Parameter(m, "p_offer_last",  domain=[exp, imp, T])
     Q_offer_last  = Parameter(m, "Q_offer_last",  domain=[R, T])
@@ -633,10 +630,6 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
     Q_offer = Variable(m, "Q_offer", domain=[R, T], type=VariableType.POSITIVE)
     p_offer = Variable(m, "p_offer", domain=[exp, imp, T], type=VariableType.POSITIVE)
     a_bid = Variable(m, "a_bid", domain=[R, T], type=VariableType.POSITIVE)
-
-    # Terminal controls are fixed to zero to avoid end-of-horizon junk decisions.
-    Icap_pos.fx[R, times[-1]] = 0.0
-    Dcap_neg.fx[R, times[-1]] = 0.0
 
     # Link p_offer up bound
     p_offer.up[exp, imp, T] = p_offer_ub_p[exp, imp]
@@ -875,20 +868,6 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
             - beta_p[T] * ytn_p[T] * c_inv_p[r] * Icap_pos[r, T],
         )
 
-        # ---- Terminal salvage value ----
-        # Credit the player for the perpetuity value of terminal capacity
-        # to prevent end-of-horizon capacity dumping.
-        # Salvage = beta_T_last * Kcap[r, T_last] * c_inv[r] / discount_rate
-        # Units: [1] * [GW] * [mUSD/GW/yr] / [1/yr] = [mUSD]
-        _final_t = times[-1]
-        if _discount_rate > 0:
-            _perp = gp.Number(1.0 / _discount_rate)
-        else:
-            _perp = gp.Number(0.0)  # no discounting → no terminal correction needed
-        terminal_salvage = (
-            beta_p[_final_t] * _perp * c_inv_p[r] * Kcap[r, _final_t]
-        )
-
         # ---- Penalties (replicated per period) ----
         # Economic quadratic penalty: penalise deviation from full capacity
         pen_quad_q = Sum(
@@ -939,7 +918,6 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
             d_surplus_t
             + producer_term_t
             + capacity_cost_t
-            + terminal_salvage
             + pen_quad_q
             + pen_quad_p
             + pen_quad_a
@@ -1031,7 +1009,6 @@ def apply_player_fixings(
     """
     times = data.times or list(_DEFAULT_TIMES)
     move_times = _move_times(times)
-    final_t = times[-1]
     implied_kcap = _implied_capacity_path(data, times, theta_dK_net)
     non_strategic_regions = _non_strategic_regions(data)
     fix_a_bid = _fix_a_bid_to_true_dem(data)
@@ -1048,14 +1025,12 @@ def apply_player_fixings(
             a_true = _true_demand_intercept(data, r, tp)
             Kcap.lo[r, tp] = 0.0
             Kcap.up[r, tp] = float("inf")
-            is_terminal = (tp == final_t)
             if r == player:
                 # Active player: Icap_pos and Dcap_neg are free decision variables.
-                # Terminal period is already fixed to 0 via .fx in build_model.
                 # IMPORTANT: set explicit .up from data bounds so that ipopt
                 # respects the capacity-rate limits even on early termination
                 # (equation constraints alone are insufficient for MPECs).
-                if is_terminal or tp not in move_times:
+                if tp not in move_times:
                     icap_ub = 0.0
                     dcap_ub = 0.0
                 else:
@@ -1070,7 +1045,7 @@ def apply_player_fixings(
                 Dcap_neg.lo[r, tp] = 0.0
                 Dcap_neg.up[r, tp] = dcap_ub
                 Q_offer.lo[r, tp] = 0.0
-                Q_offer.up[r, tp] = float("inf")
+                Q_offer.up[r, tp] = max(float(implied_kcap.get((r, tp), 0.0)), 0.0)
 
                 if fix_a_bid:
                     a_bid.lo[r, tp] = a_true
@@ -1082,8 +1057,8 @@ def apply_player_fixings(
             elif r in data.players:
                 # Other strategic players: fix gross invest/decommission from GS iterate.
                 d_val = float(theta_dK_net.get((r, tp), 0.0)) if tp in move_times else 0.0
-                i_fix = 0.0 if is_terminal else max(d_val, 0.0)
-                d_fix = 0.0 if is_terminal else max(-d_val, 0.0)
+                i_fix = max(d_val, 0.0)
+                d_fix = max(-d_val, 0.0)
                 Icap_pos.lo[r, tp] = i_fix
                 Icap_pos.up[r, tp] = i_fix
                 Dcap_neg.lo[r, tp] = d_fix

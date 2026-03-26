@@ -120,7 +120,7 @@ def _print_state_summary(*, data: _it.ModelData, regions: list[str], state: dict
     # Collect all unique time periods from Q_offer keys
     times = sorted(list(set(k[1] for k in q_offer.keys() if isinstance(k, tuple) and len(k) > 1)))
     if not times:
-        times = ["2025", "2030", "2035", "2040"]
+        times = ["2025", "2030", "2035", "2040", "2045"]
     
     for r in regions:
         for t in times:
@@ -218,13 +218,13 @@ def _apply_data_overrides(data, cfg: RunConfig) -> None:
     data.settings["c_quad_p"]  = float(cfg.c_quad_p)
     data.settings["c_quad_a"]  = float(cfg.c_quad_a)
 
-    # Discount rate for terminal salvage value
+    # Discount rate for NPV computation
     data.settings["discount_rate"] = float(cfg.discount_rate)
 
     # If RunConfig specifies a non-zero discount_rate, recompute beta_t to override
     # whatever was loaded from Excel (or the default of 1.0).
     if cfg.discount_rate != 0.0 or cfg.base_year != 2025:
-        times = data.times or ["2025", "2030", "2035", "2040"]
+        times = data.times or ["2025", "2030", "2035", "2040", "2045"]
         r = float(cfg.discount_rate)
         by = int(cfg.base_year)
         data.beta_t = {
@@ -234,7 +234,7 @@ def _apply_data_overrides(data, cfg: RunConfig) -> None:
 
 
 def _build_initial_state(data, cfg: RunConfig) -> dict[str, dict]:
-    times = data.times or ["2025", "2030", "2035", "2040"]
+    times = data.times or ["2025", "2030", "2035", "2040", "2045"]
     dK_zero = {(r, t): 0.0 for r in data.regions for t in _it._move_times(times)}
 
     print("[CONFIG] Solving LLP planner benchmark to compute dynamic warm-start...")
@@ -276,7 +276,7 @@ def _append_detailed_iter_rows(
 
     times = sorted(list(set(k[1] for k in q_map.keys() if isinstance(k, tuple) and len(k) > 1)))
     if not times:
-        times = ["2025", "2030", "2035", "2040"]
+        times = ["2025", "2030", "2035", "2040", "2045"]
     
     w_cum_map = state.get("W_cum", {})
     a_bid_map = state.get("a_bid", {})

@@ -41,7 +41,7 @@ def write_results_excel(
     # Solved c_man_var from the model (not reconstructed).
     c_man_var = state.get("c_man_var", {})
 
-    times = data.times or ["2025", "2030", "2035", "2040"]
+    times = data.times or ["2025", "2030", "2035", "2040", "2045"]
 
     # Regions Sheet
     region_rows: List[Dict[str, object]] = []

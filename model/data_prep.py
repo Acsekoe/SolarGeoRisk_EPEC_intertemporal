@@ -103,7 +103,7 @@ def _get_setting_bool(settings: Dict[str, object], key: str, default: bool) -> b
 # ---------------------------------------------------------------------------
 # Intertemporal data loader for Offer Model
 # ---------------------------------------------------------------------------
-_TIMES = ["2025", "2030", "2035", "2040"]
+_TIMES = ["2025", "2030", "2035", "2040", "2045"]
 
 # Map clean year label → possible column names in the Excel sheet
 _DMAX_COL_CANDIDATES = {
@@ -111,6 +111,7 @@ _DMAX_COL_CANDIDATES = {
     "2030": ["Dmax_2030 (GW)", "Dmax_2030(GW)", "Dmax_2030"],
     "2035": ["Dmax_2035 (GW)", "Dmax_2035(GW)", "Dmax_2035"],
     "2040": ["Dmax_2040 (GW)", "Dmax_2040(GW)", "Dmax_2040"],
+    "2045": ["Dmax_2045 (GW)", "Dmax_2045(GW)", "Dmax_2045"],
 }
 
 
@@ -172,7 +173,7 @@ def load_data_from_excel(path: str) -> ModelData:
         "p_full_usd_per_kw": "p_full",
         "eps_abs_base_scalar": "eps_abs_base",
     }
-    for yr in ["2025", "2030", "2035", "2040"]:
+    for yr in ["2025", "2030", "2035", "2040", "2045"]:
         col_mapping[f"dmax_{yr}_gw"] = f"Dmax_{yr}"
         col_mapping[f"a_dem_{yr}_usd_per_kw"] = f"a_dem_{yr}"
         col_mapping[f"b_dem_{yr}_usd_per_kw_per_gw"] = f"b_dem_{yr}"
@@ -436,7 +437,7 @@ def load_data_from_excel(path: str) -> ModelData:
                       f"b min/mean/max = {min(b_vals):.4f}/{sum(b_vals)/len(b_vals):.4f}/{max(b_vals):.4f}")
 
     # --- NPV discount factors and period lengths ---
-    years_to_next: Dict[str, float] = {"2025": 5.0, "2030": 5.0, "2035": 5.0, "2040": 5.0}
+    years_to_next: Dict[str, float] = {"2025": 5.0, "2030": 5.0, "2035": 5.0, "2040": 5.0, "2045": 5.0}
 
     beta_t: Dict[str, float] = {}
     for tp in _TIMES:
