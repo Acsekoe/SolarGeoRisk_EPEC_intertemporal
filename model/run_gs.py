@@ -46,7 +46,7 @@ class RunConfig:
     tol_obj: float = 1e-2
     stable_iters: int = 3
     eps_x: float = 1e-3
-    eps_comp: float = 0.0
+    eps_comp: float = 1e-3
     workdir: str | None = None
     convergence_mode: str = "combined"  # "strategy", "objective", or "combined"
     player_order: List[str] | None = None  # None -> data.players order from input workbook
@@ -71,6 +71,13 @@ class RunConfig:
     c_quad_q: float = 0.1  # For Q_offer (production cost)
     c_quad_p: float = 0.1  # For p_offer (offer deviation)
     c_quad_a: float = 0.1  # For a_bid (demand withholding cost)
+
+    # Capacity-policy incentives (objective terms).
+    # Positive values encourage capacity retention/expansion and penalize decommissioning.
+    cap_keep_reward: float = 3.0
+    capex_subsidy: float = 60.0
+    terminal_capacity_value: float = 120.0
+    decommission_penalty: float = 20.0
 
 
 
@@ -120,10 +127,15 @@ def _print_state_summary(*, data: _it.ModelData, regions: list[str], state: dict
     # Collect all unique time periods from Q_offer keys
     times = sorted(list(set(k[1] for k in q_offer.keys() if isinstance(k, tuple) and len(k) > 1)))
     if not times:
-        times = ["2025", "2030", "2035", "2040", "2045"]
-    
+        times = ["2025", "2030", "2035", "2040", "2045", "2050", "2055"]
+
+    # Keep console output focused on the policy horizon (<=2040) when
+    # additional terminal-buffer periods are present.
+    print_times = [t for t in times if int(t) <= 2040]
+    if not print_times:
+        print_times = list(times)
     for r in regions:
-        for t in times:
+        for t in print_times:
             k_val = _safe_float(kcap.get((r, t), (data.Kcap_2025 or data.Qcap).get(r, 0.0)))
             dk_val = _safe_float(dk_map.get((r, t), 0.0))
             q_val = _safe_float(q_offer.get((r, t), 0.0))
@@ -135,12 +147,10 @@ def _print_state_summary(*, data: _it.ModelData, regions: list[str], state: dict
             a_true = float(data.a_dem_t.get((r, t), 0.0)) if data.a_dem_t else float(data.a_dem.get(r, 0.0))
             a_bid_val = _safe_float(state.get("a_bid", {}).get((r, t), a_true))
             
-            w_cum_val = _safe_float(state.get("W_cum", {}).get((r, t), 0.0))
-            
-            # Deterministically calculate c_man_val instead of taking the solver's unconstrained floating bounds for non-focal players
-            base_c = data.c_man.get(r, 0.0)
-            c_floor = max(50.0, base_c * 0.5)
-            c_man_val = max(c_floor, base_c - 0.022 * w_cum_val)
+            # Exogenous LBD cost: read directly from the pre-computed schedule
+            c_man_val = float(
+                (data.c_man_t or {}).get((r, t), data.c_man.get(r, 0.0))
+            )
             
             # Find max p_offer for this region and time (from r to any destination)
             p_offer_map = state.get("p_offer", {})
@@ -218,13 +228,19 @@ def _apply_data_overrides(data, cfg: RunConfig) -> None:
     data.settings["c_quad_p"]  = float(cfg.c_quad_p)
     data.settings["c_quad_a"]  = float(cfg.c_quad_a)
 
+    # Capacity-policy incentives
+    data.settings["cap_keep_reward"] = float(cfg.cap_keep_reward)
+    data.settings["capex_subsidy"] = float(cfg.capex_subsidy)
+    data.settings["terminal_capacity_value"] = float(cfg.terminal_capacity_value)
+    data.settings["decommission_penalty"] = float(cfg.decommission_penalty)
+
     # Discount rate for NPV computation
     data.settings["discount_rate"] = float(cfg.discount_rate)
 
     # If RunConfig specifies a non-zero discount_rate, recompute beta_t to override
     # whatever was loaded from Excel (or the default of 1.0).
     if cfg.discount_rate != 0.0 or cfg.base_year != 2025:
-        times = data.times or ["2025", "2030", "2035", "2040", "2045"]
+        times = data.times or ["2025", "2030", "2035", "2040", "2045", "2050", "2055"]
         r = float(cfg.discount_rate)
         by = int(cfg.base_year)
         data.beta_t = {
@@ -234,7 +250,7 @@ def _apply_data_overrides(data, cfg: RunConfig) -> None:
 
 
 def _build_initial_state(data, cfg: RunConfig) -> dict[str, dict]:
-    times = data.times or ["2025", "2030", "2035", "2040", "2045"]
+    times = data.times or ["2025", "2030", "2035", "2040", "2045", "2050", "2055"]
     dK_zero = {(r, t): 0.0 for r in data.regions for t in _it._move_times(times)}
 
     print("[CONFIG] Solving LLP planner benchmark to compute dynamic warm-start...")
@@ -276,12 +292,10 @@ def _append_detailed_iter_rows(
 
     times = sorted(list(set(k[1] for k in q_map.keys() if isinstance(k, tuple) and len(k) > 1)))
     if not times:
-        times = ["2025", "2030", "2035", "2040", "2045"]
+        times = ["2025", "2030", "2035", "2040", "2045", "2050", "2055"]
     
-    w_cum_map = state.get("W_cum", {})
     a_bid_map = state.get("a_bid", {})
-    c_man_var_map = state.get("c_man_var", {})
-    
+
     for r in data.regions:
         for t in times:
             row: dict[str, object] = {
@@ -297,17 +311,9 @@ def _append_detailed_iter_rows(
                 "mu_offer": _safe_float(mu_map.get((r, t))),
                 "beta_dem": _safe_float(beta_dem_map.get((r, t))),
                 "psi_dem": _safe_float(psi_dem_map.get((r, t))),
-                "W_cum": _safe_float(w_cum_map.get((r, t))),
                 "a_bid": _safe_float(a_bid_map.get((r, t), data.a_dem_t.get((r, t)) if data.a_dem_t else data.a_dem.get(r))),
-                # Use the actual solved c_man_var level.  Fall back to the LBD formula
-                # only when the key is absent (e.g. non-player before first solve).
-                "c_man_var": _safe_float(
-                    c_man_var_map.get((r, t)),
-                    default=max(
-                        max(50.0, data.c_man.get(r, 0.0) * 0.5),
-                        data.c_man.get(r, 0.0) - 0.022 * _safe_float(w_cum_map.get((r, t))),
-                    ),
-                ),
+                # Exogenous LBD cost schedule (pre-computed via Swanson's Law)
+                "c_man_var": float((data.c_man_t or {}).get((r, t), data.c_man.get(r, 0.0))),
                 "obj": _safe_float(obj_map.get(r)) if r in data.players else 0.0,
             }
             
@@ -476,6 +482,10 @@ def run(cfg: RunConfig) -> str:
             "c_quad_q":              float(cfg.c_quad_q),
             "c_quad_p":              float(cfg.c_quad_p),
             "c_quad_a":              float(cfg.c_quad_a),
+            "cap_keep_reward":       float(cfg.cap_keep_reward),
+            "capex_subsidy":         float(cfg.capex_subsidy),
+            "terminal_capacity_value": float(cfg.terminal_capacity_value),
+            "decommission_penalty":  float(cfg.decommission_penalty),
             # --- Paths ---
             "workdir":               workdir,
         },

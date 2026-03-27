@@ -1,8 +1,8 @@
 """
-Intertemporal (4-period) perfect-foresight EPEC model using Offer-Based Uniform-Price Settlement.
+Intertemporal perfect-foresight EPEC model using Offer-Based Uniform-Price Settlement.
 
 Each strategic player maximises the present-value sum of welfare across
-T = {"2025", "2030", "2035", "2040", "2045"}, subject to per-period LLP KKT
+T = {"2025", "2030", "2035", "2040", "2045", "2050", "2055"}, subject to per-period LLP KKT
 conditions, dynamic capacity transitions, and offer price decisions.
 
 Discounting
@@ -40,7 +40,6 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set as PySet, Tuple
 
 import gamspy as gp
-from gamspy.math import sqrt as gp_sqrt
 from gamspy import (
     Alias,
     Container,
@@ -57,8 +56,8 @@ from gamspy import (
 
 z = gp.Number(0)
 
-_DEFAULT_TIMES = ["2025", "2030", "2035", "2040", "2045"]
-_DEFAULT_YTN = {"2025": 5.0, "2030": 5.0, "2035": 5.0, "2040": 5.0, "2045": 5.0}
+_DEFAULT_TIMES = ["2025", "2030", "2035", "2040", "2045", "2050", "2055"]
+_DEFAULT_YTN = {"2025": 5.0, "2030": 5.0, "2035": 5.0, "2040": 5.0, "2045": 5.0, "2050": 5.0, "2055": 5.0}
 
 
 # =============================================================================
@@ -111,6 +110,11 @@ class ModelData:
     # Discounting
     beta_t: Dict[str, float] | None = None  # NPV discount factor: beta_t = 1/(1+r)^(t-base_year)
     years_to_next: Dict[str, float] | None = None  # interval lengths (ytn[t] = years in block t)
+
+    # Exogenous LBD cost schedule: (region, time) -> cost (USD/kW), pre-computed by
+    # compute_lbd_schedule() in data_prep.py using Swanson's Law + IEA NZE projections.
+    # Falls back to time-invariant c_man[r] when None (backward-compat).
+    c_man_t: Dict[Tuple[str, str], float] | None = None
 
 
 @dataclass
@@ -471,17 +475,14 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
     # Step 3 — Parameters
     # =====================================================================
     # Time-invariant params (region only)
-    c_man_base_p = Parameter(
-        m, "c_man_base", domain=[R],
-        records=[(r, data.c_man[r]) for r in data.regions],
-    )
-    theta_lbd_p = Parameter(
-        m, "theta_lbd", domain=[R],
-        records=[(r, 0.022) for r in data.regions], # Default realistic learning rate
-    )
-    c_man_floor_p = Parameter(
-        m, "c_man_floor", domain=[R],
-        records=[(r, max(50.0, data.c_man[r] * 0.5)) for r in data.regions], # Absolute minimum cost floor
+    # Exogenous LBD cost schedule: pre-computed via Swanson's Law + IEA NZE projections.
+    # Falls back to time-invariant c_man[r] when c_man_t is not provided.
+    _c_man_t_src = data.c_man_t or {
+        (r, tp): data.c_man[r] for r in data.regions for tp in times
+    }
+    c_man_t_p = Parameter(
+        m, "c_man_t", domain=[R, T],
+        records=[(r, tp, _c_man_t_src[(r, tp)]) for r in data.regions for tp in times],
     )
     
     c_ship = Parameter(
@@ -562,6 +563,15 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
     c_quad_p = gp.Number(float(settings.get("c_quad_p", 0.0)))
     c_quad_a = gp.Number(float(settings.get("c_quad_a", 0.0)))
 
+    # Capacity-policy incentives (all optional; default off).
+    # Positive cap_keep_reward and capex_subsidy encourage retaining/expanding capacity.
+    # Positive terminal_capacity_value rewards end-of-horizon capacity stock.
+    # Positive decommission_penalty discourages dismantling capacity.
+    cap_keep_reward = gp.Number(float(settings.get("cap_keep_reward", 0.0)))
+    capex_subsidy = gp.Number(float(settings.get("capex_subsidy", 0.0)))
+    terminal_capacity_value = gp.Number(float(settings.get("terminal_capacity_value", 0.0)))
+    decommission_penalty = gp.Number(float(settings.get("decommission_penalty", 0.0)))
+
     # Proximal reference parameters — updated by gauss_seidel before each player solve.
     p_offer_last  = Parameter(m, "p_offer_last",  domain=[exp, imp, T])
     Q_offer_last  = Parameter(m, "Q_offer_last",  domain=[R, T])
@@ -576,11 +586,19 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
     Dcap_neg_last[R, T]        = z
     a_bid_last[R, T]           = z
 
-    # lam upper bound for variable bounding (use max p_offer_ub)
-    max_p_offer = max(float(v) for v in data.p_offer_ub.values()) if data.p_offer_ub else 1000.0
+    # lam upper bound for variable bounding.
+    # By default, cap each import-region lambda by the largest offer cap that can
+    # be sent into that region. Optional settings allow a small additive buffer.
+    lam_ub_buffer = float(settings.get("lam_ub_buffer", 0.0))
+    lam_ub_floor = float(settings.get("lam_ub_floor", 1.0))
     lam_ub_values: Dict[str, float] = {}
     for i in data.regions:
-        lam_ub_values[i] = max_p_offer * 10.0 # safe upper bound
+        inbound_offer_caps = [
+            float(data.p_offer_ub[(ex, i)])
+            for ex in data.regions
+        ]
+        inbound_max = max(inbound_offer_caps) if inbound_offer_caps else 0.0
+        lam_ub_values[i] = max(lam_ub_floor, inbound_max + lam_ub_buffer)
     lam_ub = Parameter(
         m, "lam_ub", domain=[R],
         records=[(i, lam_ub_values[i]) for i in data.regions],
@@ -635,17 +653,6 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
     p_offer.up[exp, imp, T] = p_offer_ub_p[exp, imp]
 
     a_bid.up[R, T] = a_dem_t_p[R, T]
-
-    # -- Learning-By-Doing Variables --
-    W_cum = Variable(m, "W_cum", domain=[R, T], type=VariableType.POSITIVE)
-    c_man_var = Variable(m, "c_man_var", domain=[R, T], type=VariableType.POSITIVE)
-    
-    # Establish strict variable lower bound for cost floor
-    c_man_var.lo[R, T] = c_man_floor_p[R]
-
-    # Initialize cumulative volume at 0 for the first period
-    for r in data.regions:
-        W_cum.fx[r, times[0]] = 0.0
 
     # -- LLP market variables --
     z_llp = Variable(m, "z_llp", type=VariableType.FREE)
@@ -784,32 +791,9 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
         eq_dub[R] = Dcap_neg[R, tp] <= g_dec_p[R] * Kcap[R, tp]
         eq_dcap_ub[tp] = eq_dub
 
-    # Pin domestic self-offer to domestic manufacturing cost
+    # Pin domestic self-offer to the exogenous LBD cost schedule
     eq_self_offer = Equation(m, "eq_self_offer", domain=[R, T])
-    eq_self_offer[R, T] = p_offer[R, R, T] == c_man_var[R, T]
-
-    # --- Learning-By-Doing (LBD) Equations ---
-
-    # Cumulative volume transitions (generic over transition pairs)
-    eq_w_transitions: Dict[str, Equation] = {}
-    for tp, tp_next in transition_pairs:
-        eq_w = Equation(m, f"eq_w_trans_{tp_next}", domain=[R])
-        eq_w[R] = (
-            W_cum[R, tp_next] == W_cum[R, tp] + ytn_p[tp] * Sum(imp, x[R, imp, tp])
-        )
-        eq_w_transitions[tp_next] = eq_w
-
-    # smooth max(c_man_base - theta*W_cum, c_man_floor):
-    # max(a,b) = (a + b + sqrt((a-b)^2 + eps)) / 2
-    _eps_smooth = gp.Number(1.0)  # smoothing parameter
-    _lbd_curve = c_man_base_p[R] - (theta_lbd_p[R] * W_cum[R, T])
-    _lbd_diff = _lbd_curve - c_man_floor_p[R]
-    eq_c_man_curve = Equation(m, "eq_c_man_curve", domain=[R, T])
-    eq_c_man_curve[R, T] = (
-        c_man_var[R, T] == (_lbd_curve + c_man_floor_p[R]
-                            + gp_sqrt(_lbd_diff * _lbd_diff + _eps_smooth))
-                           / gp.Number(2)
-    )
+    eq_self_offer[R, T] = p_offer[R, R, T] == c_man_t_p[R, T]
 
     # =====================================================================
     # Collect equations
@@ -827,8 +811,6 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
         "eq_obj_llp": eq_obj_llp,
         "eq_kcap_init": eq_kcap_init,
         "eq_self_offer": eq_self_offer,
-        **{f"eq_w_trans_{tp_next}": eq for tp_next, eq in eq_w_transitions.items()},
-        "eq_c_man_curve": eq_c_man_curve,
     }
     equations.update({f"eq_kcap_trans_{tp_next}": eq for tp_next, eq in eq_kcap_transitions.items()})
     equations.update({f"eq_icap_ub_{tp}": eq for tp, eq in eq_icap_ub.items()})
@@ -857,7 +839,7 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
             [j, T],
             beta_p[T] * ytn_p[T] * (
                 lam_var[j, T]
-                - c_man_var[r, T]
+                - c_man_t_p[r, T]
                 - c_ship[r, j]
             ) * x[r, j, T],
         )
@@ -866,6 +848,17 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
             T,
             -beta_p[T] * ytn_p[T] * f_hold_p[r] * Kcap[r, T]
             - beta_p[T] * ytn_p[T] * c_inv_p[r] * Icap_pos[r, T],
+        )
+
+        capacity_policy_t = Sum(
+            T,
+            beta_p[T] * ytn_p[T] * cap_keep_reward * Kcap[r, T]
+            + beta_p[T] * ytn_p[T] * capex_subsidy * Icap_pos[r, T]
+            - beta_p[T] * ytn_p[T] * decommission_penalty * Dcap_neg[r, T],
+        )
+
+        terminal_capacity_bonus = (
+            beta_p[times[-1]] * terminal_capacity_value * Kcap[r, times[-1]]
         )
 
         # ---- Penalties (replicated per period) ----
@@ -880,7 +873,7 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
             T,
             -gp.Number(0.5) * beta_p[T] * ytn_p[T] * c_quad_p * Sum(
                 j,
-                (p_offer[r, j, T] - c_man_var[r, T]) * (p_offer[r, j, T] - c_man_var[r, T]),
+                (p_offer[r, j, T] - c_man_t_p[r, T]) * (p_offer[r, j, T] - c_man_t_p[r, T]),
             ),
         )
 
@@ -918,6 +911,8 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
             d_surplus_t
             + producer_term_t
             + capacity_cost_t
+            + capacity_policy_t
+            + terminal_capacity_bonus
             + pen_quad_q
             + pen_quad_p
             + pen_quad_a
@@ -946,9 +941,7 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
             "a_dem_t": a_dem_t_p,
             "b_dem_t": b_dem_t_p,
             "Kcap_init": Kcap_init_p,
-            "c_man_base": c_man_base_p,
-            "theta_lbd": theta_lbd_p,
-            "c_man_floor": c_man_floor_p,
+            "c_man_t": c_man_t_p,
             "c_ship": c_ship,
             "p_offer_ub": p_offer_ub_p,
             "g_exp": g_exp_p,
@@ -975,8 +968,6 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
             "lam": lam_var,
             "mu_offer": mu_offer,
             "gamma": gamma,
-            "W_cum": W_cum,
-            "c_man_var": c_man_var,
             "beta_dem": beta_dem,
             "psi_dem": psi_dem,
         },
@@ -997,16 +988,8 @@ def apply_player_fixings(
     theta_a_bid: Dict[Tuple[str, str], float],
     *,
     player: str,
-    theta_c_man_var: Dict[Tuple[str, str], float] | None = None,
-    theta_W_cum: Dict[Tuple[str, str], float] | None = None,
 ) -> None:
-    """Fix all other players' strategies; free current player's strategies.
-
-    theta_c_man_var: optional dict (region, time) -> current LBD-adjusted cost iterate.
-    theta_W_cum: optional dict (region, time) -> cumulative production iterate.
-        Both are fixed for non-active players to prevent the solver from
-        manipulating other players' cost/learning state.
-    """
+    """Fix all other players' strategies; free current player's strategies."""
     times = data.times or list(_DEFAULT_TIMES)
     move_times = _move_times(times)
     implied_kcap = _implied_capacity_path(data, times, theta_dK_net)
@@ -1086,18 +1069,19 @@ def apply_player_fixings(
 
     # -- Offer Prices --
     # Active player: export routes p_offer[player, j!=player, T] are free;
-    #   domestic route p_offer[player, player, T] is pinned to c_man_var
+    #   domestic route p_offer[player, player, T] is pinned to c_man_t_p[player,T]
     #   by eq_self_offer, so we set bounds wide enough to not conflict.
     # Other players: ALL p_offer[other, j, T] are fixed to GS iterate,
-    #   with domestic route forced to theta_c_man_var (not the p_offer iterate)
-    #   to guarantee self-offer == manufacturing cost exactly.
+    #   with domestic route fixed to the exogenous schedule c_man_t to guarantee
+    #   self-offer == manufacturing cost exactly.
+    c_man_t_src = data.c_man_t or {}
     for ex in data.regions:
         for im in data.regions:
             for tp in times:
                 ub = float(data.p_offer_ub[(ex, im)])
                 if ex == player:
                     if im == player:
-                        # Domestic: eq_self_offer pins this to c_man_var.
+                        # Domestic: eq_self_offer pins this to c_man_t_p[player,T].
                         # Set bounds wide enough so the equality is feasible.
                         p_offer.lo[ex, im, tp] = 0.0
                         p_offer.up[ex, im, tp] = max(ub, float(data.c_man.get(ex, 0.0)) * 2.0)
@@ -1107,12 +1091,8 @@ def apply_player_fixings(
                         p_offer.up[ex, im, tp] = ub
                 else:
                     if im == ex:
-                        # Other player's domestic route: pin to their c_man_var,
-                        # NOT the p_offer iterate, to guarantee self-offer == mfg cost.
-                        if theta_c_man_var is not None:
-                            cv = float(theta_c_man_var.get((ex, tp), data.c_man.get(ex, 0.0)))
-                        else:
-                            cv = float(data.c_man.get(ex, 0.0))
+                        # Other player's domestic route: fix to their exogenous LBD cost.
+                        cv = float(c_man_t_src.get((ex, tp), data.c_man.get(ex, 0.0)))
                         p_offer.lo[ex, im, tp] = cv
                         p_offer.up[ex, im, tp] = cv
                     else:
@@ -1146,42 +1126,6 @@ def apply_player_fixings(
             for im in data.regions:
                 x.up[ex, im, tp] = cap
 
-    # -- LBD state variables (c_man_var, W_cum) --
-    # Active player: free (determined by eq_c_man_curve and eq_w_transitions).
-    # Other players: fixed to GS iterate to prevent cross-player manipulation.
-    # W_cum[R, times[0]] is ALWAYS fixed to 0 (no prior production).
-    c_man_var = ctx.vars["c_man_var"]
-    W_cum = ctx.vars["W_cum"]
-    t0 = times[0]
-    for r in data.regions:
-        for tp in times:
-            if r == player:
-                c_man_var.lo[r, tp] = max(50.0, float(data.c_man.get(r, 0.0)) * 0.5)
-                c_man_var.up[r, tp] = float("inf")
-                if tp == t0:
-                    # Initial period: W_cum must be 0 (no prior production)
-                    W_cum.lo[r, tp] = 0.0
-                    W_cum.up[r, tp] = 0.0
-                else:
-                    W_cum.lo[r, tp] = 0.0
-                    W_cum.up[r, tp] = float("inf")
-            else:
-                # Fix c_man_var to iterate
-                if theta_c_man_var is not None:
-                    cv = float(theta_c_man_var.get((r, tp), data.c_man.get(r, 0.0)))
-                else:
-                    cv = float(data.c_man.get(r, 0.0))
-                c_man_var.lo[r, tp] = cv
-                c_man_var.up[r, tp] = cv
-                # Fix W_cum to iterate (always 0 for initial period)
-                if tp == t0:
-                    wv = 0.0
-                elif theta_W_cum is not None:
-                    wv = float(theta_W_cum.get((r, tp), 0.0))
-                else:
-                    wv = 0.0
-                W_cum.lo[r, tp] = wv
-                W_cum.up[r, tp] = wv
 
 
 # =============================================================================
@@ -1228,8 +1172,6 @@ def extract_state(
         "gamma": _maybe_var("gamma"),
         "beta_dem": _maybe_var("beta_dem"),
         "psi_dem": _maybe_var("psi_dem"),
-        "W_cum": _maybe_var("W_cum"),
-        "c_man_var": _maybe_var("c_man_var"),
         "obj": obj_values,
     }
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import numbers
 from typing import Dict, List, Tuple
 
@@ -9,6 +10,88 @@ try:
     from .model_main import ModelData
 except ImportError:
     from model_main import ModelData
+
+
+# =============================================================================
+# Exogenous Learning-By-Doing (Swanson's Law) schedule
+# =============================================================================
+
+# IEA Net Zero Emissions scenario — global cumulative solar PV installed capacity (GW).
+# Source: IEA World Energy Outlook 2023, Net Zero Emissions by 2050 Scenario.
+_IEA_NZE_GLOBAL_CAPACITY_GW: Dict[int, float] = {
+    2025:  2_000,   # ~2 TW baseline (end-2025 estimate)
+    2030:  7_300,   # IEA NZE 2030 milestone
+    2035: 10_500,   # IEA NZE 2035 (interpolated)
+    2040: 14_400,   # IEA NZE 2040 milestone
+    2045: 18_200,   # IEA NZE 2045 (interpolated)
+    2050: 22_000,   # IEA NZE 2050 milestone
+}
+
+_LBD_LEARNING_RATE: float = 0.20   # 20% cost reduction per doubling of cumulative capacity
+_LBD_BASE_YEAR:     int   = 2025
+
+
+def compute_lbd_schedule(
+    c_man_base_by_region: Dict[str, float],
+    times: List[str],
+    *,
+    base_year: int = _LBD_BASE_YEAR,
+    learning_rate: float = _LBD_LEARNING_RATE,
+    global_capacity_gw: Dict[int, float] | None = None,
+) -> Dict[Tuple[str, str], float]:
+    """Pre-compute exogenous Swanson's-Law cost schedule for each (region, time).
+
+    Formula: C_t = C_0 * (X_t / X_0)^b
+      C_0  — regional base cost in base_year  (USD/kW)
+      X_t  — global cumulative capacity at year t  (GW)
+      X_0  — global cumulative capacity in base_year  (GW)
+      b    — learning index = log(1 - learning_rate) / log(2)
+
+    Learning is *global*: the same cost scalar applies to every region's base
+    cost.  Regional cost differences arise solely from the per-region c_man
+    values, not from the learning curve itself.
+
+    Returns a dict keyed by (region_str, time_str) → cost (USD/kW).
+    """
+    cap_gw = global_capacity_gw if global_capacity_gw is not None else _IEA_NZE_GLOBAL_CAPACITY_GW
+    if base_year not in cap_gw:
+        raise ValueError(
+            f"base_year {base_year} not found in global_capacity_gw. "
+            f"Available years: {sorted(cap_gw.keys())}"
+        )
+    b: float = math.log(1.0 - learning_rate) / math.log(2.0)
+    X_0: float = cap_gw[base_year]
+
+    years_sorted = sorted(cap_gw.keys())
+
+    def _global_capacity(year: int) -> float:
+        if year in cap_gw:
+            return cap_gw[year]
+        # Log-linear interpolation/extrapolation.
+        # Extrapolation uses the slope of the nearest segment.
+        if year < years_sorted[0]:
+            y_lo, y_hi = years_sorted[0], years_sorted[1]
+        elif year > years_sorted[-1]:
+            y_lo, y_hi = years_sorted[-2], years_sorted[-1]
+        else:
+            y_lo = max(y for y in years_sorted if y <= year)
+            y_hi = min(y for y in years_sorted if y >= year)
+            if y_lo == y_hi:
+                return float(cap_gw[y_lo])
+        frac = (year - y_lo) / (y_hi - y_lo)
+        return math.exp(
+            (1.0 - frac) * math.log(cap_gw[y_lo])
+            + frac * math.log(cap_gw[y_hi])
+        )
+
+    result: Dict[Tuple[str, str], float] = {}
+    for tp in times:
+        year = int(tp)
+        X_t = _global_capacity(year)
+        scalar = (X_t / X_0) ** b          # < 1 for years after base_year
+        for r, c_base in c_man_base_by_region.items():
+            result[(r, tp)] = c_base * scalar
+    return result
 
 
 def _require_columns(df: pd.DataFrame, cols: List[str], sheet: str) -> None:
@@ -103,7 +186,8 @@ def _get_setting_bool(settings: Dict[str, object], key: str, default: bool) -> b
 # ---------------------------------------------------------------------------
 # Intertemporal data loader for Offer Model
 # ---------------------------------------------------------------------------
-_TIMES = ["2025", "2030", "2035", "2040", "2045"]
+_TIMES = ["2025", "2030", "2035", "2040", "2045", "2050", "2055"]
+_FUTURE_FALLBACK_YEAR = "2040"
 
 # Map clean year label → possible column names in the Excel sheet
 _DMAX_COL_CANDIDATES = {
@@ -112,6 +196,8 @@ _DMAX_COL_CANDIDATES = {
     "2035": ["Dmax_2035 (GW)", "Dmax_2035(GW)", "Dmax_2035"],
     "2040": ["Dmax_2040 (GW)", "Dmax_2040(GW)", "Dmax_2040"],
     "2045": ["Dmax_2045 (GW)", "Dmax_2045(GW)", "Dmax_2045"],
+    "2050": ["Dmax_2050 (GW)", "Dmax_2050(GW)", "Dmax_2050"],
+    "2055": ["Dmax_2055 (GW)", "Dmax_2055(GW)", "Dmax_2055"],
 }
 
 
@@ -173,7 +259,7 @@ def load_data_from_excel(path: str) -> ModelData:
         "p_full_usd_per_kw": "p_full",
         "eps_abs_base_scalar": "eps_abs_base",
     }
-    for yr in ["2025", "2030", "2035", "2040", "2045"]:
+    for yr in _TIMES:
         col_mapping[f"dmax_{yr}_gw"] = f"Dmax_{yr}"
         col_mapping[f"a_dem_{yr}_usd_per_kw"] = f"a_dem_{yr}"
         col_mapping[f"b_dem_{yr}_usd_per_kw_per_gw"] = f"b_dem_{yr}"
@@ -254,11 +340,21 @@ def load_data_from_excel(path: str) -> ModelData:
     for tp in _TIMES:
         col = _find_col(df_params, _DMAX_COL_CANDIDATES[tp])
         for r in regions:
+            fallback_2040 = row_map[r].get(f"Dmax_{_FUTURE_FALLBACK_YEAR}", float("nan"))
+            fallback_2040_val = float(fallback_2040) if not pd.isna(fallback_2040) else float(Dmax_base[r])
             if col is not None:
                 raw = row_map[r].get(col, float("nan"))
-                val = float(raw) if not pd.isna(raw) else float(Dmax_base[r])
+                if not pd.isna(raw):
+                    val = float(raw)
+                elif int(tp) > int(_FUTURE_FALLBACK_YEAR):
+                    val = fallback_2040_val
+                else:
+                    val = float(Dmax_base[r])
             else:
-                val = float(Dmax_base[r])
+                if int(tp) > int(_FUTURE_FALLBACK_YEAR):
+                    val = fallback_2040_val
+                else:
+                    val = float(Dmax_base[r])
             if val <= 0.0:
                 raise ValueError(
                     f"Dmax_t for region '{r}', year '{tp}' must be > 0. Got: {val}"
@@ -401,18 +497,37 @@ def load_data_from_excel(path: str) -> ModelData:
     if demand_time_indexed:
         a_dem_t_impl = {}
         b_dem_t_impl = {}
+
+        a_cols_by_tp = {
+            tp: _find_col(df_params, [f"a_dem_{tp}", f"a_dem_{tp} (USD/kW)"])
+            for tp in _TIMES
+        }
+        b_cols_by_tp = {
+            tp: _find_col(df_params, [f"b_dem_{tp}", f"b_dem_{tp} (USD/kW)", f"b_dem_{tp} (USD/GW)"])
+            for tp in _TIMES
+        }
+        a_col_2040 = a_cols_by_tp.get(_FUTURE_FALLBACK_YEAR)
+        b_col_2040 = b_cols_by_tp.get(_FUTURE_FALLBACK_YEAR)
         
         for tp in _TIMES:
             a_vals, b_vals = [], []
             for r in regions:
                 dmax_val = Dmax_t[(r, tp)]
                 
-                # Look for an explicit year-column in the Excel row map, like "a_dem_2030" or "a_dem_2030 (USD/kW)"
-                a_col = _find_col(df_params, [f"a_dem_{tp}", f"a_dem_{tp} (USD/kW)"])
+                # Look for explicit year columns first.
+                a_col = a_cols_by_tp.get(tp)
                 a_val_raw = row_map[r].get(a_col, float("nan")) if a_col else float("nan")
                 
-                b_col = _find_col(df_params, [f"b_dem_{tp}", f"b_dem_{tp} (USD/kW)", f"b_dem_{tp} (USD/GW)"])
+                b_col = b_cols_by_tp.get(tp)
                 b_val_raw = row_map[r].get(b_col, float("nan")) if b_col else float("nan")
+
+                # For future periods beyond 2040, inherit 2040 demand-curve parameters
+                # when explicit columns are not provided in the workbook.
+                if int(tp) > int(_FUTURE_FALLBACK_YEAR):
+                    if pd.isna(a_val_raw) and a_col_2040:
+                        a_val_raw = row_map[r].get(a_col_2040, float("nan"))
+                    if pd.isna(b_val_raw) and b_col_2040:
+                        b_val_raw = row_map[r].get(b_col_2040, float("nan"))
 
                 if not pd.isna(a_val_raw):
                     a_val = float(a_val_raw)
@@ -437,7 +552,7 @@ def load_data_from_excel(path: str) -> ModelData:
                       f"b min/mean/max = {min(b_vals):.4f}/{sum(b_vals)/len(b_vals):.4f}/{max(b_vals):.4f}")
 
     # --- NPV discount factors and period lengths ---
-    years_to_next: Dict[str, float] = {"2025": 5.0, "2030": 5.0, "2035": 5.0, "2040": 5.0, "2045": 5.0}
+    years_to_next: Dict[str, float] = {tp: 5.0 for tp in _TIMES}
 
     beta_t: Dict[str, float] = {}
     for tp in _TIMES:
@@ -496,4 +611,5 @@ def load_data_from_excel(path: str) -> ModelData:
         b_dem_t=b_dem_t_impl,
         beta_t=beta_t,
         years_to_next=years_to_next,
+        c_man_t=compute_lbd_schedule(c_man, list(_TIMES)),
     )
