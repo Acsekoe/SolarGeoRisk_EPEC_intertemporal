@@ -91,22 +91,43 @@ def build_llp_planner_model(
     c_ship_recs = [(e, i, float(data.c_ship[(e, i)])) for e in regions for i in regions]
     c_ship_p = Parameter(m, "c_ship", domain=[exp, imp], records=c_ship_recs)
 
-    # Kcap  (region, time)
-    # Use Qcap (full installed capacity) as the primary source.
+    # Kcap  (region, time) — grows each period at the maximum allowed expansion rate.
+    # Use Qcap (full installed capacity) as the primary source for the initial period.
     # Kcap_2025 is often a placeholder; Qcap has realistic data.
-    kcap_dict = {r: float(data.Qcap.get(r, 0.0)) for r in regions}
-    # Fall back to Kcap_2025 only if Qcap is missing/zero
-    if all(v == 0.0 for v in kcap_dict.values()) and data.Kcap_2025:
-        kcap_dict = {r: float(data.Kcap_2025[r]) for r in regions}
-    Kcap_recs = [(r, t, float(kcap_dict[r])) for r in regions for t in times]
+    kcap_init = {r: float(data.Qcap.get(r, 0.0)) for r in regions}
+    if all(v == 0.0 for v in kcap_init.values()) and data.Kcap_2025:
+        kcap_init = {r: float(data.Kcap_2025[r]) for r in regions}
+
+    ytn_dict = data.years_to_next or {"2025": 5.0, "2030": 5.0, "2035": 5.0, "2040": 5.0, "2045": 5.0}
+    g_exp_dict = data.g_exp_ub or {r: 0.0 for r in regions}
+    g_exp_is_abs = bool(getattr(data, "g_exp_ub_is_absolute", False))
+
+    # Build capacity path: Kcap[r, t+1] = Kcap[r, t] + ytn[t] * max_expansion[r, t]
+    kcap_path: Dict[Tuple[str, str], float] = {}
+    kcap_current = dict(kcap_init)
+    for tp in times:
+        for r in regions:
+            kcap_path[(r, tp)] = kcap_current[r]
+        # Roll forward to next period (skip on last period)
+        if tp != times[-1]:
+            for r in regions:
+                g = float(g_exp_dict.get(r, 0.0))
+                k = kcap_current[r]
+                ytn_val = float(ytn_dict.get(tp, 5.0))
+                delta = g * ytn_val if g_exp_is_abs else g * k * ytn_val
+                kcap_current[r] = k + delta
+
+    Kcap_recs = [(r, t, kcap_path[(r, t)]) for r in regions for t in times]
     Kcap_p = Parameter(m, "Kcap", domain=[R, T], records=Kcap_recs)
 
-    print(f"[LLP] Kcap by region: {kcap_dict}")
-    print(f"[LLP] Total Kcap = {sum(kcap_dict.values()):.1f}  |  Total Dmax(2025) = {sum(float(data.Dmax_t.get((r, times[0]), 0)) for r in regions):.1f}")
+    print(f"[LLP] Kcap (max-expansion path) by region and period:")
+    for r in regions:
+        vals = "  ".join(f"{t}:{kcap_path[(r, t)]:.1f}" for t in times)
+        print(f"  {r}: {vals}")
+    print(f"[LLP] Total Kcap(t0) = {sum(kcap_path[(r, times[0])] for r in regions):.1f}  |  Total Dmax(2025) = {sum(float(data.Dmax_t.get((r, times[0]), 0)) for r in regions):.1f}")
 
     # Discount & period length  (purely cosmetic weighting here)
     beta_dict = data.beta_t or {t: 1.0 for t in times}
-    ytn_dict  = data.years_to_next or {"2025": 5.0, "2030": 5.0, "2035": 5.0, "2040": 5.0, "2045": 5.0}
     beta_p = Parameter(m, "beta", domain=[T], records=[(t, float(beta_dict[t])) for t in times])
     ytn_p  = Parameter(m, "ytn",  domain=[T], records=[(t, float(ytn_dict[t]))  for t in times])
 
@@ -253,14 +274,22 @@ def extract_llp_state(ctx: ModelContext, data: ModelData) -> Dict[str, object]:
             weight = float(beta_dict.get(t, 1.0)) * float(ytn_dict.get(t, 5.0))
             mu_cap_dict[(row["exp"], t)] = -float(row["marginal"]) / weight
 
+    # --- Kcap path (read back from the parameter in the container) ---
+    kcap_path_dict: Dict[Tuple[str, str], float] = {}
+    kcap_rec = m["Kcap"].records
+    if kcap_rec is not None:
+        for _, row in kcap_rec.iterrows():
+            kcap_path_dict[(row["R"], row["T"])] = float(row["value"])
+
     obj_total = float(ctx.models["planner"].objective_value)
 
     return {
-        "x":       x_dict,
-        "x_dem":   x_dem_dict,
-        "x_man":   x_man_dict,
-        "lam":     lam_dict,
-        "mu_cap":  mu_cap_dict,
+        "x":        x_dict,
+        "x_dem":    x_dem_dict,
+        "x_man":    x_man_dict,
+        "lam":      lam_dict,
+        "mu_cap":   mu_cap_dict,
+        "kcap_path": kcap_path_dict,
         "obj_total": obj_total,
     }
 
@@ -272,16 +301,44 @@ def build_epec_warmstart(
     state: Dict[str, object],
     data: ModelData,
 ) -> Dict[str, Dict]:
-    """Map planner solution into an initial-state dict for the EPEC GS solver."""
+    """Map planner solution into an initial-state dict for the EPEC GS solver.
+
+    Q_offer and dK_net are set to the maximum-expansion capacity path so that
+    the GS warm-start reflects each region investing at its full allowed rate
+    every period, rather than the planner's demand-driven production level.
+    """
     times = data.times or list(_DEFAULT_TIMES)
+    lam_d = state["lam"]
 
-    x_man_d  = state["x_man"]
-    lam_d    = state["lam"]
+    # ------------------------------------------------------------------
+    # Build max-expansion capacity path (mirrors build_llp_planner_model)
+    # ------------------------------------------------------------------
+    kcap_init = {r: float(data.Qcap.get(r, 0.0)) for r in data.regions}
+    if all(v == 0.0 for v in kcap_init.values()) and data.Kcap_2025:
+        kcap_init = {r: float(data.Kcap_2025[r]) for r in data.regions}
 
-    Q_offer: Dict[Tuple[str, str], float] = {}
-    for r in data.players:
-        for t in times:
-            Q_offer[(r, t)] = x_man_d.get((r, t), 0.0)
+    ytn_dict = data.years_to_next or {t: 5.0 for t in times}
+    g_exp_dict = data.g_exp_ub or {r: 0.0 for r in data.regions}
+    g_exp_is_abs = bool(getattr(data, "g_exp_ub_is_absolute", False))
+
+    kcap_path: Dict[Tuple[str, str], float] = {}
+    dK_net: Dict[Tuple[str, str], float] = {}
+    kcap_current = dict(kcap_init)
+    for tp in times:
+        for r in data.regions:
+            kcap_path[(r, tp)] = kcap_current[r]
+        if tp != times[-1]:
+            for r in data.regions:
+                g = float(g_exp_dict.get(r, 0.0))
+                k = kcap_current[r]
+                rate = g if g_exp_is_abs else g * k   # GW/yr
+                dK_net[(r, tp)] = rate
+                kcap_current[r] = k + float(ytn_dict.get(tp, 5.0)) * rate
+
+    # Q_offer = full growing capacity (not planner's demand-driven x_man)
+    Q_offer: Dict[Tuple[str, str], float] = {
+        (r, t): kcap_path[(r, t)] for r in data.players for t in times
+    }
 
     p_offer: Dict[Tuple[str, str, str], float] = {}
     for e in data.regions:
@@ -302,6 +359,7 @@ def build_epec_warmstart(
         "Q_offer": Q_offer,
         "p_offer": p_offer,
         "a_bid":   a_bid,
+        "dK_net":  dK_net,
     }
 
 
@@ -317,10 +375,7 @@ def validate_llp_solution(state: Dict[str, object], data: ModelData) -> List[str
     x_dem_d = state["x_dem"]
     x_man_d = state["x_man"]
     lam_d   = state["lam"]
-
-    kcap = data.Kcap_2025 if data.Kcap_2025 is not None else {
-        r: float(data.Qcap.get(r, 0.0)) for r in data.regions
-    }
+    kcap_path = state.get("kcap_path", {})
 
     for i in data.regions:
         for t in times:
@@ -338,9 +393,9 @@ def validate_llp_solution(state: Dict[str, object], data: ModelData) -> List[str
 
     for e in data.regions:
         for t in times:
-            # (2) no exporter exceeds Kcap
+            # (2) no exporter exceeds Kcap (use time-indexed path)
             prod = x_man_d.get((e, t), 0.0)
-            cap  = float(kcap[e])
+            cap  = float(kcap_path.get((e, t), data.Qcap.get(e, 0.0)))
             if prod > cap + 1e-3:
                 msgs.append(f"[CHECK 2] prod={prod:.2f} > Kcap={cap:.2f} for {e},{t}")
 
@@ -384,10 +439,7 @@ def print_llp_summary(state: Dict[str, object], data: ModelData) -> None:
     x_man_d = state["x_man"]
     lam_d      = state["lam"]
     mu_cap_d   = state["mu_cap"]
-
-    kcap = data.Kcap_2025 if data.Kcap_2025 is not None else {
-        r: float(data.Qcap.get(r, 0.0)) for r in data.regions
-    }
+    kcap_path  = state.get("kcap_path", {})
 
     print(f"\nObjective value: {state['obj_total']:.2f}")
     print(f"\n{'':4} {'t':4} {'x_dem':>8} {'x_man':>8} {'Kcap':>8} {'lam':>8} {'mu_cap':>8} {'c_man':>8}")
@@ -396,20 +448,27 @@ def print_llp_summary(state: Dict[str, object], data: ModelData) -> None:
         for t in times:
             dem    = x_dem_d.get((r, t), 0.0)
             man    = x_man_d.get((r, t), 0.0)
-            cap    = float(kcap[r])
+            cap    = float(kcap_path.get((r, t), data.Qcap.get(r, 0.0)))
             lam    = lam_d.get((r, t), 0.0)
             mu_cap = mu_cap_d.get((r, t), 0.0)
             cm     = float(data.c_man[r])
             print(f"{r:4} {t:4} {dem:8.1f} {man:8.1f} {cap:8.1f} {lam:8.2f} {mu_cap:8.2f} {cm:8.2f}")
 
-    # Trade flow matrix for first period
-    t0 = times[0]
-    print(f"\nTrade matrix t={t0}:")
+    # Q_offer = total production per exporter (sum of outgoing trade flows)
+    print(f"\nQ_offer (= x_man) by region and period:")
+    print(f"{'':6}" + "".join(f"{t:>8}" for t in times))
+    for r in data.regions:
+        vals = "".join(f"{x_man_d.get((r, t), 0.0):8.1f}" for t in times)
+        print(f"{r:6}{vals}")
+
+    # Trade flow matrix for all periods
     header = f"{'':6}" + "".join(f"{i:>8}" for i in data.regions)
-    print(header)
-    for e in data.regions:
-        vals = "".join(f"{x_dict.get((e, i, t0), 0.0):8.1f}" for i in data.regions)
-        print(f"{e:6}{vals}")
+    for t in times:
+        print(f"\nTrade matrix t={t}:")
+        print(header)
+        for e in data.regions:
+            vals = "".join(f"{x_dict.get((e, i, t), 0.0):8.1f}" for i in data.regions)
+            print(f"{e:6}{vals}")
 
 
 # =====================================================================

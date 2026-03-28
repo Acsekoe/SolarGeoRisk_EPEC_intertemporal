@@ -10,16 +10,14 @@ from datetime import datetime
 from typing import Dict, List
 
 try:
-    from .data_prep import load_data_from_excel
+    from .data_prep import load_data_from_excel, load_initial_state
     from .gauss_seidel import solve_gs_intertemporal
-    from . import model_llp_planner as llp
     from . import model_main as _it
     from .plot_results import write_default_plots
     from .results_writer import write_results_excel
 except ImportError:
-    from data_prep import load_data_from_excel
+    from data_prep import load_data_from_excel, load_initial_state
     from gauss_seidel import solve_gs_intertemporal
-    import model_llp_planner as llp
     import model_main as _it
     from plot_results import write_default_plots
     from results_writer import write_results_excel
@@ -28,6 +26,7 @@ except ImportError:
 # Define project root relative to this script
 SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(SCRIPTS_DIR)
+_VALID_CONVERGENCE_MODES = {"strategy", "objective", "combined"}
 
 @dataclass(frozen=True)
 class RunConfig:
@@ -110,6 +109,13 @@ def _safe_float(v: object, default: float = 0.0) -> float:
         return float(default)
 
 
+def _time_label_to_year(label: object) -> int | None:
+    try:
+        return int(str(label).strip())
+    except Exception:
+        return None
+
+
 
 def _print_state_summary(*, data: _it.ModelData, regions: list[str], state: dict[str, dict], tag: str = "SUMMARY") -> None:
     kcap = state.get("Kcap", {}) or {}
@@ -131,7 +137,7 @@ def _print_state_summary(*, data: _it.ModelData, regions: list[str], state: dict
 
     # Keep console output focused on the policy horizon (<=2040) when
     # additional terminal-buffer periods are present.
-    print_times = [t for t in times if int(t) <= 2040]
+    print_times = [t for t in times if (_time_label_to_year(t) is not None and _time_label_to_year(t) <= 2040)]
     if not print_times:
         print_times = list(times)
     for r in regions:
@@ -243,29 +249,81 @@ def _apply_data_overrides(data, cfg: RunConfig) -> None:
         times = data.times or ["2025", "2030", "2035", "2040", "2045"]
         r = float(cfg.discount_rate)
         by = int(cfg.base_year)
+        year_labels = {tp: _time_label_to_year(tp) for tp in times}
+        bad_labels = [tp for tp, year in year_labels.items() if year is None]
+        if bad_labels:
+            raise ValueError(
+                "discount_rate/base_year override requires integer-like time labels. "
+                f"Invalid labels: {bad_labels}"
+            )
         data.beta_t = {
-            tp: (1.0 if r == 0.0 else 1.0 / ((1.0 + r) ** (int(tp) - by)))
+            tp: (1.0 if r == 0.0 else 1.0 / ((1.0 + r) ** (year_labels[tp] - by)))
             for tp in times
         }
 
 
-def _build_initial_state(data, cfg: RunConfig) -> dict[str, dict]:
+def _build_initial_state(data, cfg: RunConfig, excel_path: str) -> dict[str, dict]:
     times = data.times or ["2025", "2030", "2035", "2040", "2045"]
-    dK_zero = {(r, t): 0.0 for r in data.regions for t in _it._move_times(times)}
+    move_times = _it._move_times(times)
 
-    print("[CONFIG] Solving LLP planner benchmark to compute dynamic warm-start...")
-    llp_ctx = llp.build_llp_planner_model(data)
-    llp.solve_llp_planner(llp_ctx, solver="conopt")
-    llp_state = llp.extract_llp_state(llp_ctx, data)
-    ws = llp.build_epec_warmstart(llp_state, data)
-    
+    # Try reading warm-start from the initial_state sheet in the input Excel
+    excel_ws = load_initial_state(excel_path, data)
+    if excel_ws is not None:
+        print(f"[CONFIG] Loaded initial state from Excel sheet 'initial_state'")
+        for r in data.players:
+            q25 = excel_ws["Q_offer"].get((r, times[0]), 0.0)
+            q_end = excel_ws["Q_offer"].get((r, times[-1]), 0.0)
+            dk25 = excel_ws["dK_net"].get((r, times[0]), 0.0)
+            print(f"  Q_offer[{r}] ({times[0]}->{times[-1]}) = {q25:.1f} -> {q_end:.1f}  dK_net({times[0]})={dk25:.2f}")
+        return excel_ws
+
+    print("[CONFIG] Building deterministic EPEC warm-start (no initial_state sheet)...")
+
+    kcap_current = dict(_it._initial_capacity_by_region(data))
+    ytn_dict = data.years_to_next or {t: 5.0 for t in times}
+    g_exp_dict = data.g_exp_ub or {r: 0.0 for r in data.regions}
+    g_exp_is_abs = bool(getattr(data, "g_exp_ub_is_absolute", False))
+
+    q_offer: dict[tuple[str, str], float] = {}
+    dK_net: dict[tuple[str, str], float] = {}
+    for tp in times:
+        for r in data.players:
+            q_offer[(r, tp)] = max(float(kcap_current.get(r, 0.0)), 0.0)
+        if tp not in move_times:
+            continue
+        years = float(ytn_dict.get(tp, 5.0))
+        for r in data.regions:
+            g = float(g_exp_dict.get(r, 0.0))
+            k_now = max(float(kcap_current.get(r, 0.0)), 0.0)
+            rate = g if g_exp_is_abs else g * k_now
+            dK_net[(r, tp)] = rate
+            kcap_current[r] = k_now + years * rate
+
+    p_offer = {
+        (ex, im, tp): 0.5 * float(data.p_offer_ub[(ex, im)])
+        for ex in data.regions
+        for im in data.regions
+        for tp in times
+    }
+    a_bid = {
+        (r, tp): _it._true_demand_intercept(data, r, tp)
+        for r in data.regions
+        for tp in times
+    }
+    ws = {
+        "Q_offer": q_offer,
+        "dK_net": dK_net,
+        "p_offer": p_offer,
+        "a_bid": a_bid,
+    }
+
     # Print summary
     for r in data.players:
         q25 = ws["Q_offer"].get((r, times[0]), 0.0)
         q_end = ws["Q_offer"].get((r, times[-1]), 0.0)
-        print(f"  Q_offer[{r}] ({times[0]}->{times[-1]}) = {q25:.1f} -> {q_end:.1f}")
-    ws["dK_net"] = dict(dK_zero)
-    print(f"[CONFIG] LLP warm-start ready (time-indexed across {len(times)} periods)")
+        dk25 = ws["dK_net"].get((r, times[0]), 0.0)
+        print(f"  Q_offer[{r}] ({times[0]}->{times[-1]}) = {q25:.1f} -> {q_end:.1f}  dK_net({times[0]})={dk25:.2f}")
+    print(f"[CONFIG] Deterministic warm-start ready (time-indexed across {len(times)} periods)")
     return ws
 
 
@@ -357,7 +415,12 @@ def run(cfg: RunConfig) -> str:
     tol_rel = float(cfg.tol_strat)
     tol_obj = float(cfg.tol_obj)
     stable_iters = int(cfg.stable_iters)
-    convergence_mode = cfg.convergence_mode
+    convergence_mode = cfg.convergence_mode.strip().lower()
+    if convergence_mode not in _VALID_CONVERGENCE_MODES:
+        raise ValueError(
+            f"Unsupported convergence_mode '{cfg.convergence_mode}'. "
+            f"Supported: {sorted(_VALID_CONVERGENCE_MODES)}."
+        )
 
     run_id = datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + uuid.uuid4().hex[:6]
     os.makedirs(out_dir, exist_ok=True)
@@ -413,10 +476,11 @@ def run(cfg: RunConfig) -> str:
 
     total_start = time.perf_counter()
     timing_state["sweep_start"] = total_start
-    init_state = _build_initial_state(data, cfg)
-    print(f"[MAIN] Starting {iters} sweeps with {solver}")
-
+    state: dict[str, dict] | None = None
+    iter_rows: list[dict[str, object]] = []
     try:
+        init_state = _build_initial_state(data, cfg, excel_path)
+        print(f"[MAIN] Starting {iters} sweeps with {solver}")
         state, iter_rows = solve_gs_intertemporal(
             data,
             solver=solver,
@@ -434,79 +498,76 @@ def run(cfg: RunConfig) -> str:
             player_order=cfg.player_order,
             force_ch_last=cfg.force_ch_last,
         )
+        _print_state_summary(data=data, regions=list(data.regions), state=state, tag="FINAL")
+
+        write_results_excel(
+            data=data,
+            state=state,
+            iter_rows=iter_rows,
+            detailed_iter_rows=detailed_iter_rows,
+            output_path=output_path,
+            meta={
+                # --- Identity ---
+                "excel_path":            excel_path,
+                "run_id":                run_id,
+                # --- Algorithm ---
+                "method":                method,
+                "iters":                 iters,
+                "omega":                 omega,
+                "tol_rel":               tol_rel,
+                "tol_obj":               float(cfg.tol_obj),
+                "stable_iters":          stable_iters,
+                "convergence_mode":      convergence_mode,
+                # --- Solver ---
+                "solver":                solver,
+                "feastol":               feastol,
+                "opttol":                opttol,
+                "solver_options":        str(solver_opts),
+                # --- Tolerances ---
+                "eps_x":                 float(data.eps_x),
+                "eps_comp":              float(data.eps_comp),
+                # --- Discounting (effective values used in solve) ---
+                "discount_rate":         float(cfg.discount_rate),
+                "base_year":             int(cfg.base_year),
+                "beta_t":                str(data.beta_t or {}),
+                "ytn":                   str(data.years_to_next or {}),
+                # --- Strategic demand bidding ---
+                "fix_a_bid_to_true_dem": bool(data.settings.get("fix_a_bid_to_true_dem", False)),
+                # --- Penalties and Scalers ---
+                "c_pen_q":               float(cfg.c_pen_q),
+                "c_pen_p":               float(cfg.c_pen_p),
+                "c_pen_a":               float(cfg.c_pen_a),
+                "c_quad_q":              float(cfg.c_quad_q),
+                "c_quad_p":              float(cfg.c_quad_p),
+                "c_quad_a":              float(cfg.c_quad_a),
+                "cap_keep_reward":       float(cfg.cap_keep_reward),
+                "capex_subsidy":         float(cfg.capex_subsidy),
+                "terminal_capacity_value": float(cfg.terminal_capacity_value),
+                "decommission_penalty":  float(cfg.decommission_penalty),
+                # --- Paths ---
+                "workdir":               workdir,
+            },
+        )
+
+        try:
+            write_default_plots(output_path=output_path, plots_dir=plots_dir)
+        except Exception as e:
+            print(f"[WARN] Plot generation failed: {e}")
+        print(f"[OK] wrote: {output_path}")
+        return output_path
     finally:
         total_elapsed = time.perf_counter() - total_start
         print(f"\n[TIMING] Total solve time: {total_elapsed:.2f}s")
         if sweep_times:
             print(f"[TIMING] Mean sweep time: {sum(sweep_times)/len(sweep_times):.2f}s  (n={len(sweep_times)})")
-
-    _print_state_summary(data=data, regions=list(data.regions), state=state, tag="FINAL")
-
-    write_results_excel(
-        data=data,
-        state=state,
-        iter_rows=iter_rows,
-        detailed_iter_rows=detailed_iter_rows,
-        output_path=output_path,
-        meta={
-            # --- Identity ---
-            "excel_path":            excel_path,
-            "run_id":                run_id,
-            # --- Algorithm ---
-            "method":                method,
-            "iters":                 iters,
-            "omega":                 omega,
-            "tol_rel":               tol_rel,
-            "tol_obj":               float(cfg.tol_obj),
-            "stable_iters":          stable_iters,
-            "convergence_mode":      convergence_mode,
-            # --- Solver ---
-            "solver":                solver,
-            "feastol":               feastol,
-            "opttol":                opttol,
-            "solver_options":        str(solver_opts),
-            # --- Tolerances ---
-            "eps_x":                 float(data.eps_x),
-            "eps_comp":              float(data.eps_comp),
-            # --- Discounting (effective values used in solve) ---
-            "discount_rate":         float(cfg.discount_rate),
-            "base_year":             int(cfg.base_year),
-            "beta_t":                str(data.beta_t or {}),
-            "ytn":                   str(data.years_to_next or {}),
-            # --- Strategic demand bidding ---
-            "fix_a_bid_to_true_dem": bool(data.settings.get("fix_a_bid_to_true_dem", False)),
-            # --- Penalties and Scalers ---
-            "c_pen_q":               float(cfg.c_pen_q),
-            "c_pen_p":               float(cfg.c_pen_p),
-            "c_pen_a":               float(cfg.c_pen_a),
-            "c_quad_q":              float(cfg.c_quad_q),
-            "c_quad_p":              float(cfg.c_quad_p),
-            "c_quad_a":              float(cfg.c_quad_a),
-            "cap_keep_reward":       float(cfg.cap_keep_reward),
-            "capex_subsidy":         float(cfg.capex_subsidy),
-            "terminal_capacity_value": float(cfg.terminal_capacity_value),
-            "decommission_penalty":  float(cfg.decommission_penalty),
-            # --- Paths ---
-            "workdir":               workdir,
-        },
-    )
-
-    try:
-        write_default_plots(output_path=output_path, plots_dir=plots_dir)
-    except Exception as e:
-        print(f"[WARN] Plot generation failed: {e}")
-    print(f"[OK] wrote: {output_path}")
-
-    if not cfg.keep_workdir:
-        try:
-            shutil.rmtree(workdir, ignore_errors=True)
-            print(f"[CLEANUP] Deleted workdir: {workdir}")
-        except Exception as e:
-            print(f"[WARN] Could not delete workdir {workdir}: {e}")
-    else:
-        print(f"[KEEP] Workdir retained: {workdir}")
-
-    return output_path
+        if not cfg.keep_workdir:
+            try:
+                shutil.rmtree(workdir, ignore_errors=True)
+                print(f"[CLEANUP] Deleted workdir: {workdir}")
+            except Exception as e:
+                print(f"[WARN] Could not delete workdir {workdir}: {e}")
+        else:
+            print(f"[KEEP] Workdir retained: {workdir}")
 
 
 def main() -> None:

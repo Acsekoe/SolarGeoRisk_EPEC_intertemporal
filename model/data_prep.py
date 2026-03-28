@@ -611,3 +611,81 @@ def load_data_from_excel(path: str) -> ModelData:
         years_to_next=years_to_next,
         c_man_t=compute_lbd_schedule(c_man, list(_TIMES)),
     )
+
+
+# =============================================================================
+# Load optional initial_state sheet for EPEC warm-start
+# =============================================================================
+def load_initial_state(
+    path: str,
+    data: "ModelData",
+) -> Dict[str, Dict] | None:
+    """Read the ``initial_state`` sheet from the input workbook.
+
+    Returns a warm-start dict with keys ``Q_offer``, ``p_offer``, ``a_bid``,
+    ``dK_net`` — or ``None`` if the sheet does not exist.
+
+    Expected columns:
+        region, t, Q_offer, dK_net, a_bid, p_offer_<imp1>, p_offer_<imp2>, ...
+    where ``<imp>`` names match the region codes exactly.
+    """
+    try:
+        df = pd.read_excel(path, sheet_name="initial_state")
+    except ValueError:
+        return None
+
+    if df.empty:
+        return None
+
+    # Normalise
+    df.columns = [str(c).strip() for c in df.columns]
+    if "region" not in df.columns or "t" not in df.columns:
+        raise ValueError("initial_state sheet must have 'region' and 't' columns.")
+
+    df["region"] = df["region"].apply(_norm_region)
+    df["t"] = df["t"].astype(str).str.strip()
+
+    regions = data.regions
+    times = data.times or list(_TIMES)
+
+    Q_offer: Dict[Tuple[str, str], float] = {}
+    dK_net: Dict[Tuple[str, str], float] = {}
+    a_bid: Dict[Tuple[str, str], float] = {}
+    p_offer: Dict[Tuple[str, str, str], float] = {}
+
+    # Identify p_offer columns: p_offer_<importer>
+    p_offer_cols = {
+        c: c.replace("p_offer_", "")
+        for c in df.columns
+        if c.startswith("p_offer_")
+    }
+
+    for _, row in df.iterrows():
+        r = str(row["region"])
+        t = str(row["t"])
+        if r not in regions or t not in times:
+            continue
+
+        if "Q_offer" in df.columns and not pd.isna(row["Q_offer"]):
+            Q_offer[(r, t)] = float(row["Q_offer"])
+
+        if "dK_net" in df.columns and not pd.isna(row["dK_net"]):
+            dK_net[(r, t)] = float(row["dK_net"])
+
+        if "a_bid" in df.columns and not pd.isna(row["a_bid"]):
+            a_bid[(r, t)] = float(row["a_bid"])
+
+        for col, imp in p_offer_cols.items():
+            imp_norm = _norm_region(imp)
+            if imp_norm in regions and not pd.isna(row[col]):
+                p_offer[(r, imp_norm, t)] = float(row[col])
+
+    if not Q_offer:
+        return None
+
+    return {
+        "Q_offer": Q_offer,
+        "p_offer": p_offer,
+        "a_bid":   a_bid,
+        "dK_net":  dK_net,
+    }

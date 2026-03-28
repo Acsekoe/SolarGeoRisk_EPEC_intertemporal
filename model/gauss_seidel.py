@@ -110,6 +110,35 @@ def solve_gs_intertemporal(
 
     theta_obj: Dict[str, float] = {r: 0.0 for r in data.players}
 
+    # ---- Warm-start GAMS variable levels from theta dicts ----
+    # Without this, ipopt starts all POSITIVE variables at level 0, which
+    # traps the MPEC solver in a no-investment local optimum.
+    _Kcap_var = ctx.vars.get("Kcap")
+    _Icap_var = ctx.vars.get("Icap_pos")
+    _Dcap_var = ctx.vars.get("Dcap_neg")
+    _Q_var    = ctx.vars.get("Q_offer")
+    _p_var    = ctx.vars.get("p_offer")
+    _a_var    = ctx.vars.get("a_bid")
+
+    if _Kcap_var is not None:
+        for (r, tp), v in implied_kcap.items():
+            _Kcap_var.l[r, tp] = max(v, 0.0)
+    if _Icap_var is not None and _Dcap_var is not None:
+        for r in data.players:
+            for tp in move_times:
+                d_val = float(theta_dK_net.get((r, tp), 0.0))
+                _Icap_var.l[r, tp] = max(d_val, 0.0)
+                _Dcap_var.l[r, tp] = max(-d_val, 0.0)
+    if _Q_var is not None:
+        for (r, tp), v in theta_Q.items():
+            _Q_var.l[r, tp] = v
+    if _p_var is not None:
+        for (ex, im, tp), v in theta_p_offer.items():
+            _p_var.l[ex, im, tp] = v
+    if _a_var is not None:
+        for (r, tp), v in theta_a_bid.items():
+            _a_var.l[r, tp] = v
+
     def _scaled_change(new: float, old: float, scale: float) -> float:
         return abs(new - old) / max(scale, 1e-12)
 

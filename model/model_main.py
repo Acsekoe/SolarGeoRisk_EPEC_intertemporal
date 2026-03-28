@@ -1109,30 +1109,25 @@ def apply_player_fixings(
                         p_offer.lo[ex, im, tp] = v
                         p_offer.up[ex, im, tp] = v
 
-    # -- Hard upper bounds on trade flows x --
-    # IPOPT can fail to enforce the eq_cap inequality (Q_offer - Σx ≥ 0)
-    # on non-convex MPECs.  Adding x.up per exporter makes it impossible
-    # for the solver to violate the offer-capacity constraint.
+    # -- Route-level sanity bounds on trade flows x --
+    # Bound each bilateral flow by the importer's demand ceiling only. Do not
+    # use per-route variable bounds as a surrogate for the exporter aggregate
+    # limit; eq_cap continues to enforce that structurally.
     x = ctx.vars["x"]
+    if data.Dmax_t is not None:
+        importer_caps = {
+            tp: {im: max(float(data.Dmax_t.get((im, tp), 0.0)), 0.0) for im in data.regions}
+            for tp in times
+        }
+    else:
+        importer_caps = {
+            tp: {im: max(float(data.Dmax.get(im, 0.0)), 0.0) for im in data.regions}
+            for tp in times
+        }
     for ex in data.regions:
         for tp in times:
-            # Each exporter's total shipments cannot exceed Q_offer.
-            # Use the current Q_offer value (fixed for non-active, free for active).
-            if ex == player:
-                # Active player: Q_offer is free, bounded by Kcap.
-                cap = max(float(implied_kcap.get((ex, tp), 0.0)), 0.0)
-            else:
-                # Other player: Q_offer is fixed to iterate.
-                cap = max(
-                    _clip_value(
-                        float(theta_Q.get((ex, tp), 0.0)),
-                        0.0,
-                        max(float(implied_kcap.get((ex, tp), 0.0)), 0.0),
-                    ),
-                    0.0,
-                )
             for im in data.regions:
-                x.up[ex, im, tp] = cap
+                x.up[ex, im, tp] = importer_caps[tp][im]
 
 
 
