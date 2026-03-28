@@ -40,7 +40,7 @@ class RunConfig:
     opttol: float = 1e-4
     
     method: str = "gauss_seidel"
-    iters: int = 10
+    iters: int = 15
     omega: float = 0.7
     tol_strat: float = 1e-2
     tol_obj: float = 1e-2
@@ -68,16 +68,16 @@ class RunConfig:
 
     # Economic quadratic penalties: -0.5 * c_quad * X^2
     # Represents convex costs or disutility.
-    c_quad_q: float = 0.1  # For Q_offer (production cost)
+    c_quad_q: float = 0.01  # For Q_offer (production cost)
     c_quad_p: float = 0.1  # For p_offer (offer deviation)
     c_quad_a: float = 0.1  # For a_bid (demand withholding cost)
 
     # Capacity-policy incentives (objective terms).
     # Positive values encourage capacity retention/expansion and penalize decommissioning.
-    cap_keep_reward: float = 3.0
-    capex_subsidy: float = 60.0
-    terminal_capacity_value: float = 120.0
-    decommission_penalty: float = 20.0
+    cap_keep_reward: float = 0
+    capex_subsidy: float = 0
+    terminal_capacity_value: float = 1
+    decommission_penalty: float = 0
 
 
 
@@ -127,7 +127,7 @@ def _print_state_summary(*, data: _it.ModelData, regions: list[str], state: dict
     # Collect all unique time periods from Q_offer keys
     times = sorted(list(set(k[1] for k in q_offer.keys() if isinstance(k, tuple) and len(k) > 1)))
     if not times:
-        times = ["2025", "2030", "2035", "2040", "2045", "2050", "2055"]
+        times = ["2025", "2030", "2035", "2040", "2045"]
 
     # Keep console output focused on the policy horizon (<=2040) when
     # additional terminal-buffer periods are present.
@@ -240,7 +240,7 @@ def _apply_data_overrides(data, cfg: RunConfig) -> None:
     # If RunConfig specifies a non-zero discount_rate, recompute beta_t to override
     # whatever was loaded from Excel (or the default of 1.0).
     if cfg.discount_rate != 0.0 or cfg.base_year != 2025:
-        times = data.times or ["2025", "2030", "2035", "2040", "2045", "2050", "2055"]
+        times = data.times or ["2025", "2030", "2035", "2040", "2045"]
         r = float(cfg.discount_rate)
         by = int(cfg.base_year)
         data.beta_t = {
@@ -250,7 +250,7 @@ def _apply_data_overrides(data, cfg: RunConfig) -> None:
 
 
 def _build_initial_state(data, cfg: RunConfig) -> dict[str, dict]:
-    times = data.times or ["2025", "2030", "2035", "2040", "2045", "2050", "2055"]
+    times = data.times or ["2025", "2030", "2035", "2040", "2045"]
     dK_zero = {(r, t): 0.0 for r in data.regions for t in _it._move_times(times)}
 
     print("[CONFIG] Solving LLP planner benchmark to compute dynamic warm-start...")
@@ -292,7 +292,7 @@ def _append_detailed_iter_rows(
 
     times = sorted(list(set(k[1] for k in q_map.keys() if isinstance(k, tuple) and len(k) > 1)))
     if not times:
-        times = ["2025", "2030", "2035", "2040", "2045", "2050", "2055"]
+        times = ["2025", "2030", "2035", "2040", "2045"]
     
     a_bid_map = state.get("a_bid", {})
 

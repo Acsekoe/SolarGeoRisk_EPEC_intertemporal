@@ -186,7 +186,7 @@ def _get_setting_bool(settings: Dict[str, object], key: str, default: bool) -> b
 # ---------------------------------------------------------------------------
 # Intertemporal data loader for Offer Model
 # ---------------------------------------------------------------------------
-_TIMES = ["2025", "2030", "2035", "2040", "2045", "2050", "2055"]
+_TIMES = ["2025", "2030", "2035", "2040", "2045"]
 _FUTURE_FALLBACK_YEAR = "2040"
 
 # Map clean year label → possible column names in the Excel sheet
@@ -196,8 +196,6 @@ _DMAX_COL_CANDIDATES = {
     "2035": ["Dmax_2035 (GW)", "Dmax_2035(GW)", "Dmax_2035"],
     "2040": ["Dmax_2040 (GW)", "Dmax_2040(GW)", "Dmax_2040"],
     "2045": ["Dmax_2045 (GW)", "Dmax_2045(GW)", "Dmax_2045"],
-    "2050": ["Dmax_2050 (GW)", "Dmax_2050(GW)", "Dmax_2050"],
-    "2055": ["Dmax_2055 (GW)", "Dmax_2055(GW)", "Dmax_2055"],
 }
 
 

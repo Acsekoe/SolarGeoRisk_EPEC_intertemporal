@@ -56,7 +56,7 @@ def solve_gs_intertemporal(
     else:
         base_order = list(data.players)
 
-    times: List[str] = data.times or ["2025", "2030", "2035", "2040", "2045", "2050", "2055"]
+    times: List[str] = data.times or ["2025", "2030", "2035", "2040", "2045"]
     move_times = _it._move_times(times)
     init_kcap = _it._initial_capacity_by_region(data)
     fix_a_bid = _it._fix_a_bid_to_true_dem(data)
@@ -202,6 +202,7 @@ def solve_gs_intertemporal(
 
             dK_net_sol = state.get("dK_net", {})
             Q_sol = state.get("Q_offer", {})
+            Kcap_sol = state.get("Kcap", {})
             poffer_sol = state.get("p_offer", {})
             a_bid_sol = state.get("a_bid", {})
             obj_sol = state.get("obj", {})
@@ -215,11 +216,14 @@ def solve_gs_intertemporal(
 
             implied_kcap = _it._implied_capacity_path(data, times, theta_dK_net)
 
-            # Update Q_offer
+            # Update Q_offer — clip against the *solved* Kcap from this BR
+            # (not the lagged implied_kcap) so that investment in the current
+            # BR solve can immediately relax the Q_offer ceiling.
             for tp in times:
                 key = (p, tp)
                 if key in Q_sol:
-                    br = _it._clip_value(float(Q_sol[key]), 0.0, max(float(implied_kcap[key]), 0.0))
+                    solved_kcap = float(Kcap_sol[key]) if key in Kcap_sol else max(float(implied_kcap[key]), 0.0)
+                    br = _it._clip_value(float(Q_sol[key]), 0.0, max(solved_kcap, 0.0))
                     theta_Q[key] = (1.0 - omega) * theta_Q[key] + omega * br
 
             # Update p_offer

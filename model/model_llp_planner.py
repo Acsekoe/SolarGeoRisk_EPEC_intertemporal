@@ -40,7 +40,7 @@ except ImportError:
 # =====================================================================
 # Default time periods
 # =====================================================================
-_DEFAULT_TIMES = ("2025", "2030", "2035", "2040", "2045", "2050", "2055")
+_DEFAULT_TIMES = ("2025", "2030", "2035", "2040", "2045")
 
 
 # =====================================================================
@@ -106,7 +106,7 @@ def build_llp_planner_model(
 
     # Discount & period length  (purely cosmetic weighting here)
     beta_dict = data.beta_t or {t: 1.0 for t in times}
-    ytn_dict  = data.years_to_next or {"2025": 5.0, "2030": 5.0, "2035": 5.0, "2040": 5.0, "2045": 5.0, "2050": 5.0, "2055": 5.0}
+    ytn_dict  = data.years_to_next or {"2025": 5.0, "2030": 5.0, "2035": 5.0, "2040": 5.0, "2045": 5.0}
     beta_p = Parameter(m, "beta", domain=[T], records=[(t, float(beta_dict[t])) for t in times])
     ytn_p  = Parameter(m, "ytn",  domain=[T], records=[(t, float(ytn_dict[t]))  for t in times])
 
@@ -236,7 +236,7 @@ def extract_llp_state(ctx: ModelContext, data: ModelData) -> Dict[str, object]:
     # --- Duals: lambda (market clearing price) ---
     # Raw GAMS marginal includes beta*ytn weighting; divide out.
     beta_dict = data.beta_t or {t: 1.0 for t in times}
-    ytn_dict  = data.years_to_next or {"2025": 5.0, "2030": 5.0, "2035": 5.0, "2040": 5.0, "2045": 5.0, "2050": 5.0, "2055": 5.0}
+    ytn_dict  = data.years_to_next or {"2025": 5.0, "2030": 5.0, "2035": 5.0, "2040": 5.0, "2045": 5.0}
 
     lam_dict: Dict[Tuple[str, str], float] = {}
     if eq_dem_rec is not None:

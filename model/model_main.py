@@ -2,7 +2,7 @@
 Intertemporal perfect-foresight EPEC model using Offer-Based Uniform-Price Settlement.
 
 Each strategic player maximises the present-value sum of welfare across
-T = {"2025", "2030", "2035", "2040", "2045", "2050", "2055"}, subject to per-period LLP KKT
+T = {"2025", "2030", "2035", "2040", "2045"}, subject to per-period LLP KKT
 conditions, dynamic capacity transitions, and offer price decisions.
 
 Discounting
@@ -56,8 +56,8 @@ from gamspy import (
 
 z = gp.Number(0)
 
-_DEFAULT_TIMES = ["2025", "2030", "2035", "2040", "2045", "2050", "2055"]
-_DEFAULT_YTN = {"2025": 5.0, "2030": 5.0, "2035": 5.0, "2040": 5.0, "2045": 5.0, "2050": 5.0, "2055": 5.0}
+_DEFAULT_TIMES = ["2025", "2030", "2035", "2040", "2045"]
+_DEFAULT_YTN = {"2025": 5.0, "2030": 5.0, "2035": 5.0, "2040": 5.0, "2045": 5.0}
 
 
 # =============================================================================
@@ -858,7 +858,7 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
         )
 
         terminal_capacity_bonus = (
-            beta_p[times[-1]] * terminal_capacity_value * Kcap[r, times[-1]]
+            beta_p[times[-1]] * terminal_capacity_value * c_inv_p[r] * Kcap[r, times[-1]]
         )
 
         # ---- Penalties (replicated per period) ----
@@ -1028,7 +1028,11 @@ def apply_player_fixings(
                 Dcap_neg.lo[r, tp] = 0.0
                 Dcap_neg.up[r, tp] = dcap_ub
                 Q_offer.lo[r, tp] = 0.0
-                Q_offer.up[r, tp] = max(float(implied_kcap.get((r, tp), 0.0)), 0.0)
+                # Active player: Kcap is endogenous, so do NOT cap Q_offer.up
+                # by the lagged implied_kcap — that would suppress investment
+                # incentives.  The structural bound Q_offer <= Kcap is enforced
+                # via eq_q_offer_cap; leave the variable upper bound open here.
+                Q_offer.up[r, tp] = float("inf")
 
                 if fix_a_bid:
                     a_bid.lo[r, tp] = a_true
@@ -1047,7 +1051,11 @@ def apply_player_fixings(
                 Dcap_neg.lo[r, tp] = d_fix
                 Dcap_neg.up[r, tp] = d_fix
 
-                q_val = _clip_value(float(theta_Q.get((r, tp), 0.0)), 0.0, max(float(implied_kcap.get((r, tp), 0.0)), 0.0))
+                q_val = _clip_value(
+                    float(theta_Q.get((r, tp), 0.0)),
+                    0.0,
+                    max(float(implied_kcap.get((r, tp), 0.0)), 0.0),
+                )
                 Q_offer.lo[r, tp] = q_val
                 Q_offer.up[r, tp] = q_val
 

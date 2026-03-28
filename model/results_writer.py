@@ -41,7 +41,7 @@ def write_results_excel(
     # Exogenous LBD cost schedule (pre-computed, not a solved variable).
     c_man_t_src = data.c_man_t or {}
 
-    times = data.times or ["2025", "2030", "2035", "2040", "2045", "2050", "2055"]
+    times = data.times or ["2025", "2030", "2035", "2040", "2045"]
 
     # Regions Sheet
     region_rows: List[Dict[str, object]] = []
