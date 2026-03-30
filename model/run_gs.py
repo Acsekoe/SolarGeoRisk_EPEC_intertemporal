@@ -28,6 +28,12 @@ SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(SCRIPTS_DIR)
 _VALID_CONVERGENCE_MODES = {"strategy", "objective", "combined"}
 
+# ── Player sweep order ────────────────────────────────────────────────────────
+# Edit this list to control the Gauss-Seidel sweep order.
+# Every strategic player must appear exactly once (case-insensitive).
+PLAYER_ORDER: List[str] = ["ch", "us", "apac", "af", "row", "eu"]
+# ─────────────────────────────────────────────────────────────────────────────
+
 @dataclass(frozen=True)
 class RunConfig:
     excel_path: str = os.path.join(PROJECT_ROOT, "inputs", "input_data_intertemporal.xlsx")
@@ -48,9 +54,6 @@ class RunConfig:
     eps_comp: float = 1e-3
     workdir: str | None = None
     convergence_mode: str = "combined"  # "strategy", "objective", or "combined"
-    player_order: List[str] | None = None  # None -> data.players order from input workbook
-    shuffle_players: bool = False
-    force_ch_last: bool = True  # Keeps legacy ordering unless explicitly disabled
 
     keep_workdir: bool = False
 
@@ -67,7 +70,7 @@ class RunConfig:
 
     # Economic quadratic penalties: -0.5 * c_quad * X^2
     # Represents convex costs or disutility.
-    c_quad_q: float = 0.01  # For Q_offer (production cost)
+    c_quad_q: float = 1  # For Q_offer (production cost)
     c_quad_p: float = 0.1  # For p_offer (offer deviation)
     c_quad_a: float = 0.1  # For a_bid (demand withholding cost)
 
@@ -75,10 +78,16 @@ class RunConfig:
     # Positive values encourage capacity retention/expansion and penalize decommissioning.
     cap_keep_reward: float = 0
     capex_subsidy: float = 0
-    terminal_capacity_value: float = 1
+    terminal_capacity_value: float = 0
     decommission_penalty: float = 0
 
+    # Force Q_offer == Kcap for all regions and periods (no quantity withholding).
+    # Eliminates mu_offer gaming; useful as a diagnostic run.
+    fix_q_offer_to_kcap: bool = False
 
+    # Minimum fraction of Kcap that must be offered (0.0 = no floor, 1.0 = same as fix_q_offer_to_kcap).
+    # E.g. 0.99 limits withholding to 1% of capacity while allowing mu_offer to go to zero (interior solution).
+    q_offer_lb_frac: float = 0.99
 
     # NPV discounting: override beta_t computed in data_prep.py.
     # 0.0 = undiscounted (block-length weighted); any positive value recomputes beta_t.
@@ -240,12 +249,22 @@ def _apply_data_overrides(data, cfg: RunConfig) -> None:
     data.settings["terminal_capacity_value"] = float(cfg.terminal_capacity_value)
     data.settings["decommission_penalty"] = float(cfg.decommission_penalty)
 
+    # Force Q_offer == Kcap (no quantity withholding)
+    data.settings["fix_q_offer_to_kcap"] = bool(cfg.fix_q_offer_to_kcap)
+    data.settings["q_offer_lb_frac"] = float(cfg.q_offer_lb_frac)
+
     # Discount rate for NPV computation
     data.settings["discount_rate"] = float(cfg.discount_rate)
 
     # If RunConfig specifies a non-zero discount_rate, recompute beta_t to override
     # whatever was loaded from Excel (or the default of 1.0).
+    # NOTE: This silently overwrites any discount_rate set in the Excel settings sheet.
     if cfg.discount_rate != 0.0 or cfg.base_year != 2025:
+        excel_beta = data.beta_t or {}
+        print(
+            f"[CONFIG] RunConfig.discount_rate={cfg.discount_rate} base_year={cfg.base_year} "
+            f"overrides Excel beta_t (was: {excel_beta})"
+        )
         times = data.times or ["2025", "2030", "2035", "2040", "2045"]
         r = float(cfg.discount_rate)
         by = int(cfg.base_year)
@@ -437,11 +456,7 @@ def run(cfg: RunConfig) -> str:
     print(f"[CONFIG] iters={iters} omega={omega:g} tol_rel={tol_rel:g} stable_iters={stable_iters}")
     print(f"[CONFIG] eps_x={float(data.eps_x):g} eps_comp={float(data.eps_comp):g}")
     print(f"[CONFIG] convergence_mode={convergence_mode}")
-    if cfg.player_order:
-        print(f"[CONFIG] player_order={cfg.player_order}")
-    else:
-        print(f"[CONFIG] player_order=<from input data: {data.players}>")
-    print(f"[CONFIG] shuffle_players={cfg.shuffle_players} force_ch_last={cfg.force_ch_last}")
+    print(f"[CONFIG] player_order={PLAYER_ORDER}")
     print(f"[CONFIG] workdir={workdir}{' (keep)' if cfg.keep_workdir else ' (auto-cleanup)'}")
 
     sweep_times: list[float] = []
@@ -494,9 +509,7 @@ def run(cfg: RunConfig) -> str:
             iter_callback=_iter_log,
             initial_state=init_state,
             convergence_mode=convergence_mode,
-            shuffle_players=cfg.shuffle_players,
-            player_order=cfg.player_order,
-            force_ch_last=cfg.force_ch_last,
+            player_order=PLAYER_ORDER,
         )
         _print_state_summary(data=data, regions=list(data.regions), state=state, tag="FINAL")
 

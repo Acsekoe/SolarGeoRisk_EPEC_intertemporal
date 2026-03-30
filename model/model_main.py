@@ -229,6 +229,11 @@ def _fix_a_bid_to_true_dem(data: ModelData) -> bool:
     return bool(settings.get("fix_a_bid_to_true_dem", False))
 
 
+def _fix_q_offer_to_kcap(data: ModelData) -> bool:
+    settings = data.settings or {}
+    return bool(settings.get("fix_q_offer_to_kcap", False))
+
+
 def _implied_capacity_path(
     data: ModelData,
     times: List[str],
@@ -707,7 +712,16 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
     eq_cap[exp, T] = Q_offer[exp, T] - Sum(imp, x[exp, imp, T]) >= z
 
     eq_q_offer_cap = Equation(m, "eq_q_offer_cap", domain=[R, T])
-    eq_q_offer_cap[R, T] = Q_offer[R, T] <= Kcap[R, T]
+    if bool(settings.get("fix_q_offer_to_kcap", False)):
+        eq_q_offer_cap[R, T] = Q_offer[R, T] == Kcap[R, T]
+    else:
+        eq_q_offer_cap[R, T] = Q_offer[R, T] <= Kcap[R, T]
+
+    q_offer_lb_frac = float(settings.get("q_offer_lb_frac", 0.0))
+    eq_q_offer_lb: Equation | None = None
+    if q_offer_lb_frac > 0.0 and not bool(settings.get("fix_q_offer_to_kcap", False)):
+        eq_q_offer_lb = Equation(m, "eq_q_offer_lb", domain=[R, T])
+        eq_q_offer_lb[R, T] = Q_offer[R, T] >= gp.Number(q_offer_lb_frac) * Kcap[R, T]
 
     # --- Stationarity (KKT) ---
     eq_stat_x = Equation(m, "eq_stat_x", domain=[exp, imp, T])
@@ -815,6 +829,8 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
     equations.update({f"eq_kcap_trans_{tp_next}": eq for tp_next, eq in eq_kcap_transitions.items()})
     equations.update({f"eq_icap_ub_{tp}": eq for tp, eq in eq_icap_ub.items()})
     equations.update({f"eq_dcap_ub_{tp}": eq for tp, eq in eq_dcap_ub.items()})
+    if eq_q_offer_lb is not None:
+        equations["eq_q_offer_lb"] = eq_q_offer_lb
 
     # =====================================================================
     # Step 6 — Objective = sum over time
@@ -988,11 +1004,16 @@ def apply_player_fixings(
     theta_a_bid: Dict[Tuple[str, str], float],
     *,
     player: str,
+    theta_Kcap: Dict[Tuple[str, str], float] | None = None,
 ) -> None:
     """Fix all other players' strategies; free current player's strategies."""
     times = data.times or list(_DEFAULT_TIMES)
     move_times = _move_times(times)
-    implied_kcap = _implied_capacity_path(data, times, theta_dK_net)
+    # Use actual solved Kcap if provided, otherwise fall back to reconstructing from dK_net
+    if theta_Kcap is not None:
+        implied_kcap = theta_Kcap
+    else:
+        implied_kcap = _implied_capacity_path(data, times, theta_dK_net)
     non_strategic_regions = _non_strategic_regions(data)
     fix_a_bid = _fix_a_bid_to_true_dem(data)
 
@@ -1027,11 +1048,11 @@ def apply_player_fixings(
                 Icap_pos.up[r, tp] = icap_ub
                 Dcap_neg.lo[r, tp] = 0.0
                 Dcap_neg.up[r, tp] = dcap_ub
+                # Active player: eq_q_offer_cap enforces Q_offer <= Kcap structurally.
+                # Do NOT set Q_offer.lo to implied_kcap here — Kcap is endogenous
+                # for the active player, so a fixed lower bound can conflict with
+                # the optimised Kcap and cause infeasibility.
                 Q_offer.lo[r, tp] = 0.0
-                # Active player: Kcap is endogenous, so do NOT cap Q_offer.up
-                # by the lagged implied_kcap — that would suppress investment
-                # incentives.  The structural bound Q_offer <= Kcap is enforced
-                # via eq_q_offer_cap; leave the variable upper bound open here.
                 Q_offer.up[r, tp] = float("inf")
 
                 if fix_a_bid:
@@ -1051,11 +1072,11 @@ def apply_player_fixings(
                 Dcap_neg.lo[r, tp] = d_fix
                 Dcap_neg.up[r, tp] = d_fix
 
-                q_val = _clip_value(
-                    float(theta_Q.get((r, tp), 0.0)),
-                    0.0,
-                    max(float(implied_kcap.get((r, tp), 0.0)), 0.0),
-                )
+                k_implied = max(float(implied_kcap.get((r, tp), 0.0)), 0.0)
+                if _fix_q_offer_to_kcap(data):
+                    q_val = k_implied
+                else:
+                    q_val = _clip_value(float(theta_Q.get((r, tp), 0.0)), 0.0, k_implied)
                 Q_offer.lo[r, tp] = q_val
                 Q_offer.up[r, tp] = q_val
 

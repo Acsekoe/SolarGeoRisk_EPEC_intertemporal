@@ -80,6 +80,7 @@ def solve_gs_intertemporal(
             for r in data.players for tp in move_times
         }
         implied_kcap = _it._implied_capacity_path(data, times, theta_dK_net)
+        theta_Kcap: Dict[Tuple[str, str], float] = dict(implied_kcap)
         raw_theta_Q: Dict[Tuple[str, str], float] = {
             (r, tp): float(initial_state.get("Q_offer", {}).get((r, tp), 0.8 * float(init_kcap[r])))
             for r in data.players for tp in times
@@ -104,6 +105,7 @@ def solve_gs_intertemporal(
     else:
         theta_dK_net = {(r, tp): 0.0 for r in data.players for tp in move_times}
         implied_kcap = _it._implied_capacity_path(data, times, theta_dK_net)
+        theta_Kcap = dict(implied_kcap)
         theta_Q = {(r, tp): 0.8 * float(implied_kcap[(r, tp)]) for r in data.players for tp in times}
         theta_p_offer = {(ex, im, tp): 0.5 * float(data.p_offer_ub[(ex, im)]) for ex in data.regions for im in data.regions for tp in times}
         theta_a_bid = {(r, tp): _it._true_demand_intercept(data, r, tp) for r in data.players for tp in times}
@@ -121,7 +123,7 @@ def solve_gs_intertemporal(
     _a_var    = ctx.vars.get("a_bid")
 
     if _Kcap_var is not None:
-        for (r, tp), v in implied_kcap.items():
+        for (r, tp), v in theta_Kcap.items():
             _Kcap_var.l[r, tp] = max(v, 0.0)
     if _Icap_var is not None and _Dcap_var is not None:
         for r in data.players:
@@ -203,6 +205,7 @@ def solve_gs_intertemporal(
 
         prev_Q = dict(theta_Q)
         prev_dK_net = dict(theta_dK_net)
+        prev_Kcap = dict(theta_Kcap)
         prev_poffer = dict(theta_p_offer)
         prev_a_bid = dict(theta_a_bid)
         prev_obj = dict(theta_obj)
@@ -223,6 +226,7 @@ def solve_gs_intertemporal(
                 theta_Q, theta_dK_net, theta_p_offer,
                 theta_a_bid,
                 player=p,
+                theta_Kcap=theta_Kcap,
             )
             ctx.models[p].solve(**solve_kwargs)
 
@@ -236,22 +240,31 @@ def solve_gs_intertemporal(
             a_bid_sol = state.get("a_bid", {})
             obj_sol = state.get("obj", {})
 
-            # Update net capacity changes and recompute the implied stock path.
+            # Update net capacity changes.
             for tp in move_times:
                 key = (p, tp)
                 if key in dK_net_sol:
                     br = float(dK_net_sol[key])
                     theta_dK_net[key] = (1.0 - omega) * theta_dK_net[key] + omega * br
 
-            implied_kcap = _it._implied_capacity_path(data, times, theta_dK_net)
+            # Recompute theta_Kcap from the damped theta_dK_net so that the
+            # capacity path and the net-change rates stay consistent.
+            theta_Kcap.update(_it._implied_capacity_path(data, times, theta_dK_net))
 
-            # Update Q_offer — clip against the *solved* Kcap from this BR
-            # (not the lagged implied_kcap) so that investment in the current
-            # BR solve can immediately relax the Q_offer ceiling.
+            # Update Q_offer — clip against the solved Kcap.
+            # When fix_q_offer_to_kcap is active, pin theta_Q == theta_Kcap so
+            # that Q_offer_last (used in the proximal penalty) stays consistent
+            # with the bound that apply_player_fixings imposes on fixed players.
+            # Omega-damping is applied in both branches so all strategies converge
+            # at the same rate; without damping, theta_Q could jump by the full
+            # step while theta_dK_net (and thus theta_Kcap) are only moved by omega.
+            fix_q = _it._fix_q_offer_to_kcap(data)
             for tp in times:
                 key = (p, tp)
-                if key in Q_sol:
-                    solved_kcap = float(Kcap_sol[key]) if key in Kcap_sol else max(float(implied_kcap[key]), 0.0)
+                solved_kcap = float(theta_Kcap.get(key, 0.0))
+                if fix_q:
+                    theta_Q[key] = (1.0 - omega) * theta_Q[key] + omega * solved_kcap
+                elif key in Q_sol:
                     br = _it._clip_value(float(Q_sol[key]), 0.0, max(solved_kcap, 0.0))
                     theta_Q[key] = (1.0 - omega) * theta_Q[key] + omega * br
 
@@ -274,13 +287,13 @@ def solve_gs_intertemporal(
                 theta_obj[p] = float(obj_sol.get(p, 0.0))
 
         # ---- Convergence metrics ----
-        prev_kcap_path = _it._implied_capacity_path(data, times, prev_dK_net)
-        curr_kcap_path = _it._implied_capacity_path(data, times, theta_dK_net)
+        # theta_Kcap is fully determined by theta_dK_net (derived, not independent),
+        # so it is excluded from r_strat to avoid double-counting capacity changes.
+        # theta_Q is the independent offer strategy; it is always included.
         for r in data.players:
             for tp in move_times:
                 r_strat = max(r_strat, _scaled_change(theta_dK_net[(r, tp)], prev_dK_net[(r, tp)], _dk_scale(r)))
             for tp in times:
-                r_strat = max(r_strat, _scaled_change(curr_kcap_path[(r, tp)], prev_kcap_path[(r, tp)], _q_scale(r)))
                 r_strat = max(r_strat, _scaled_change(theta_Q[(r, tp)], prev_Q[(r, tp)], _q_scale(r)))
                 
                 if not fix_a_bid:
