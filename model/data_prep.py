@@ -207,8 +207,15 @@ def _find_col(df: pd.DataFrame, candidates: List[str]) -> str | None:
     return None
 
 
-def load_data_from_excel(path: str) -> ModelData:
+def load_data_from_excel(path: str, params_region_sheet: str = "params_region") -> ModelData:
     """Load intertemporal ModelData for the offer model from an Excel file.
+
+    Parameters
+    ----------
+    params_region_sheet:
+        Name of the Excel sheet containing regional parameters (capacity, costs, demand).
+        Defaults to ``"params_region"``; set to e.g. ``"params_region_new"`` to load
+        an alternative scenario sheet with the same column structure.
     """
     def _opt_float(row: "pd.Series", col: str, default: float) -> float:
         """Read an optional float column from a pandas Series, returning default if missing/NaN."""
@@ -238,9 +245,9 @@ def load_data_from_excel(path: str) -> ModelData:
 
     # params_region
     try:
-        df_params = pd.read_excel(path, sheet_name="params_region")
+        df_params = pd.read_excel(path, sheet_name=params_region_sheet)
     except ValueError as exc:
-        raise ValueError("Missing required sheet: params_region") from exc
+        raise ValueError(f"Missing required sheet: '{params_region_sheet}'") from exc
 
     col_mapping = {
         "region": "r",
@@ -264,12 +271,12 @@ def load_data_from_excel(path: str) -> ModelData:
 
     df_params = df_params.rename(columns=col_mapping)
 
-    _require_columns(df_params, ["r", "Qcap_exist (GW)", "c_man (USD/kW)"], "params_region")
+    _require_columns(df_params, ["r", "Qcap_exist (GW)", "c_man (USD/kW)"], params_region_sheet)
 
     d_col = next((c for c in ["D", "D (GW)"] if c in df_params.columns), None)
     dmax_col = next((c for c in ["Dmax", "Dmax (GW)", "Dmax_2025 (GW)", "Dmax_2025(GW)", "Dmax_2025"] if c in df_params.columns), None)
     if dmax_col is None and d_col is None:
-        raise ValueError("Missing demand-cap column in sheet 'params_region'. Add 'Dmax' or legacy 'D'.")
+        raise ValueError(f"Missing demand-cap column in sheet '{params_region_sheet}'. Add 'Dmax' or legacy 'D'.")
 
     df_params = df_params.copy()
     df_params["r"] = df_params["r"].map(
@@ -285,7 +292,7 @@ def load_data_from_excel(path: str) -> ModelData:
 
     missing_regions = [r for r in regions if r not in row_map]
     if missing_regions:
-        raise ValueError(f"params_region missing rows for regions: {missing_regions}")
+        raise ValueError(f"Sheet '{params_region_sheet}' missing rows for regions: {missing_regions}")
 
     Qcap: Dict[str, float] = {}
     D: Dict[str, float] = {}

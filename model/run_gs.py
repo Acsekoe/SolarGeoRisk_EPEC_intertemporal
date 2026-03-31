@@ -40,6 +40,10 @@ class RunConfig:
     out_dir: str = os.path.join(PROJECT_ROOT, "outputs")
     plots_dir: str = os.path.join(PROJECT_ROOT, "plots")
 
+    # Which params_region sheet to load from the Excel input.
+    # Switch to "params_region_new" (or any other sheet name) to use an alternative scenario.
+    params_region_sheet: str = "params_region_new"
+
     solver: str = "ipopt"
     feastol: float = 1e-4
     opttol: float = 1e-4
@@ -70,7 +74,7 @@ class RunConfig:
 
     # Economic quadratic penalties: -0.5 * c_quad * X^2
     # Represents convex costs or disutility.
-    c_quad_q: float = 1  # For Q_offer (production cost)
+    c_quad_q: float = 0.1  # For Q_offer (production cost)
     c_quad_p: float = 0.1  # For p_offer (offer deviation)
     c_quad_a: float = 0.1  # For a_bid (demand withholding cost)
 
@@ -85,9 +89,9 @@ class RunConfig:
     # Eliminates mu_offer gaming; useful as a diagnostic run.
     fix_q_offer_to_kcap: bool = False
 
-    # Minimum fraction of Kcap that must be offered (0.0 = no floor, 1.0 = same as fix_q_offer_to_kcap).
-    # E.g. 0.99 limits withholding to 1% of capacity while allowing mu_offer to go to zero (interior solution).
-    q_offer_lb_frac: float = 0.99
+    # Clamp a_bid to true demand (no strategic demand withholding).
+    # Set to False to allow importers to strategically understate willingness to pay.
+    fix_a_bid_to_true_dem: bool = False
 
     # NPV discounting: override beta_t computed in data_prep.py.
     # 0.0 = undiscounted (block-length weighted); any positive value recomputes beta_t.
@@ -230,8 +234,7 @@ def _apply_data_overrides(data, cfg: RunConfig) -> None:
         data.settings = {}
 
     # fix_a_bid_to_true_dem=True clamps declared demand to true demand (no strategic withholding).
-    # This override always takes effect; it cannot be disabled via Excel settings.
-    data.settings["fix_a_bid_to_true_dem"] = True
+    data.settings["fix_a_bid_to_true_dem"] = bool(cfg.fix_a_bid_to_true_dem)
 
     # Proximal penalty scalars — passed through to build_model via data.settings.
     data.settings["c_pen_q"]   = float(cfg.c_pen_q)
@@ -251,7 +254,6 @@ def _apply_data_overrides(data, cfg: RunConfig) -> None:
 
     # Force Q_offer == Kcap (no quantity withholding)
     data.settings["fix_q_offer_to_kcap"] = bool(cfg.fix_q_offer_to_kcap)
-    data.settings["q_offer_lb_frac"] = float(cfg.q_offer_lb_frac)
 
     # Discount rate for NPV computation
     data.settings["discount_rate"] = float(cfg.discount_rate)
@@ -447,7 +449,7 @@ def run(cfg: RunConfig) -> str:
     output_path = os.path.join(out_dir, f"results_{run_id}.xlsx")
     workdir = _gams_workdir(run_id, cfg.workdir)
 
-    data = load_data_from_excel(excel_path)
+    data = load_data_from_excel(excel_path, params_region_sheet=cfg.params_region_sheet)
     _apply_data_overrides(data, cfg)
 
     print(f"[CONFIG] Model type: Offer Model EPEC")

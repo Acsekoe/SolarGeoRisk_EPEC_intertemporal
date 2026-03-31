@@ -717,12 +717,6 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
     else:
         eq_q_offer_cap[R, T] = Q_offer[R, T] <= Kcap[R, T]
 
-    q_offer_lb_frac = float(settings.get("q_offer_lb_frac", 0.0))
-    eq_q_offer_lb: Equation | None = None
-    if q_offer_lb_frac > 0.0 and not bool(settings.get("fix_q_offer_to_kcap", False)):
-        eq_q_offer_lb = Equation(m, "eq_q_offer_lb", domain=[R, T])
-        eq_q_offer_lb[R, T] = Q_offer[R, T] >= gp.Number(q_offer_lb_frac) * Kcap[R, T]
-
     # --- Stationarity (KKT) ---
     eq_stat_x = Equation(m, "eq_stat_x", domain=[exp, imp, T])
     eq_stat_x[exp, imp, T] = (
@@ -829,8 +823,6 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
     equations.update({f"eq_kcap_trans_{tp_next}": eq for tp_next, eq in eq_kcap_transitions.items()})
     equations.update({f"eq_icap_ub_{tp}": eq for tp, eq in eq_icap_ub.items()})
     equations.update({f"eq_dcap_ub_{tp}": eq for tp, eq in eq_dcap_ub.items()})
-    if eq_q_offer_lb is not None:
-        equations["eq_q_offer_lb"] = eq_q_offer_lb
 
     # =====================================================================
     # Step 6 — Objective = sum over time
@@ -874,7 +866,8 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
         )
 
         terminal_capacity_bonus = (
-            beta_p[times[-1]] * terminal_capacity_value * c_inv_p[r] * Kcap[r, times[-1]]
+            beta_p[times[-1]] * terminal_capacity_value * c_inv_p[r]
+            * Sum(T, ytn_p[T] * Icap_pos[r, T])
         )
 
         # ---- Penalties (replicated per period) ----
