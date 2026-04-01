@@ -1,136 +1,235 @@
 \documentclass[11pt]{article}
 \usepackage[a4paper,margin=1in]{geometry}
 \usepackage{amsmath,amssymb,mathtools}
-\usepackage{booktabs}
-
-\title{Intertemporal Offer-Based EPEC: Implemented Equations}
-\author{SolarGeoRisk\_EPEC\_intertemporal}
-\date{\today}
 
 \begin{document}
-\maketitle
 
-\section*{Scope}
-This document matches the current implemented player best-response NLP used inside the Gauss-Seidel loop in \texttt{model\_main.py} and \texttt{gauss\_seidel.py}.
-
-\section*{Sets and Indices}
-\begin{align*}
-&\mathcal{R} && \text{regions} \\
-&\mathcal{P} \subseteq \mathcal{R} && \text{strategic players} \\
-&\mathcal{T} = \{2025,2030,2035,2040\},\quad \mathcal{T}^{-}=\{2025,2030,2035\}
-\end{align*}
-Indices: $r \in \mathcal{R}$ (active player in objective), $i,j \in \mathcal{R}$, $t \in \mathcal{T}$.
-
-\section*{Key Parameters}
-\begin{align*}
-&a_{i,t}, b_{i,t}, D^{\max}_{i,t} && \text{inverse demand coefficients and demand cap} \\
-&\bar p_{i,j}, c^{ship}_{i,j} && \text{offer-price upper bound and shipping cost} \\
-&K^{init}_i,\ g^{exp}_i,\ g^{dec}_i && \text{initial capacity, expansion and decommission bounds} \\
-&\beta_t,\ y_t && \text{discount factor and period length} \\
-&f^{hold}_r,\ c^{inv}_r,\ \rho^p_r && \text{capacity holding, investment, and quadratic offer penalty} \\
-&\rho^{prox}, c^{pen}_p,c^{pen}_q,c^{pen}_{cap},c^{pen}_a && \text{proximal penalty scalars} \\
-&\epsilon_x,\ \epsilon_{comp} && \text{LLP regularization and complementarity relaxation} \\
-&\theta^{lbd}_i,\ c^{base}_i,\ c^{floor}_i && \text{learning-by-doing cost-curve parameters}
-\end{align*}
-
-Define $s^{abs}\in\{0,1\}$ as data flag \texttt{g\_exp\_ub\_is\_absolute}.  
-In data loading, \texttt{g\_exp\_ub\_per\_yr\_gw} sets $s^{abs}=1$.
-
-\section*{Decision Variables}
-\begin{align*}
-&K_{i,t}, I^+_{i,t}, D^-_{i,t}, Q_{i,t}, p_{i,j,t}, a^{bid}_{i,t} \\
-&x_{i,j,t}, x^{dem}_{i,t}, \lambda_{i,t}, \mu_{i,t}, \gamma_{i,j,t}, \beta^{dem}_{i,t}, \psi_{i,t} \\
-&W_{i,t}, c^{man}_{i,t}, z^{llp}
-\end{align*}
-with $I^+,D^-,Q,p,x,x^{dem},\mu,\gamma,\beta^{dem},\psi,W,c^{man}\ge 0$, and $\lambda,z^{llp}$ free.
-
-\section*{LLP KKT Block (per $t$)}
-\paragraph{Primal identity (reporting equation).}
-\begin{align}
-z^{llp} &=
-\sum_{i,j,t}\left(p_{i,j,t}+c^{ship}_{i,j}\right)x_{i,j,t}
-+\sum_{i,j,t}\frac{\epsilon_x}{2}x_{i,j,t}^2
--\sum_{i,t}\left(a^{bid}_{i,t}x^{dem}_{i,t}-\frac{b_{i,t}}{2}(x^{dem}_{i,t})^2\right)
-\end{align}
-
-\paragraph{Primal feasibility.}
-\begin{align}
-\sum_i x_{i,j,t} - x^{dem}_{j,t} &= 0 && \forall j,t \\
-Q_{i,t} - \sum_j x_{i,j,t} &\ge 0 && \forall i,t \\
-Q_{i,t} &\le K_{i,t} && \forall i,t
-\end{align}
-
-\paragraph{Stationarity.}
-\begin{align}
-\left(p_{i,j,t}+c^{ship}_{i,j}\right)+\epsilon_x x_{i,j,t}-\lambda_{j,t}+\mu_{i,t}-\gamma_{i,j,t} &= 0 && \forall i,j,t \\
--(a^{bid}_{j,t}-b_{j,t}x^{dem}_{j,t})+\lambda_{j,t}+\beta^{dem}_{j,t}-\psi_{j,t} &= 0 && \forall j,t
-\end{align}
-
-\paragraph{Complementarity (exact or relaxed).}
-\begin{align}
-\mu_{i,t}\left(Q_{i,t}-\sum_j x_{i,j,t}\right) &\le \epsilon_{comp} && \forall i,t \\
-\gamma_{i,j,t}x_{i,j,t} &\le \epsilon_{comp} && \forall i,j,t \\
-\beta^{dem}_{j,t}\left(D^{\max}_{j,t}-x^{dem}_{j,t}\right) &\le \epsilon_{comp} && \forall j,t \\
-\psi_{j,t}x^{dem}_{j,t} &\le \epsilon_{comp} && \forall j,t
-\end{align}
-If $\epsilon_{comp}=0$, these become equalities to zero.
-
-\section*{Intertemporal Capacity and Cost Dynamics}
-\begin{align}
-K_{i,2025} &= K^{init}_i && \forall i \\
-K_{i,t^+} &= K_{i,t}+y_t\left(I^+_{i,t}-D^-_{i,t}\right) && \forall i,\ t\in\mathcal{T}^{-}
-\end{align}
-with $t^+$ the next period after $t$.
-
-\paragraph{Expansion/decommission bounds.}
-\begin{align}
-I^+_{i,t} &\le (1-s^{abs})\,g^{exp}_i K_{i,t} + s^{abs}\,g^{exp}_i && \forall i,\ t\in\mathcal{T}^{-} \\
-D^-_{i,t} &\le g^{dec}_i K_{i,t} && \forall i,\ t\in\mathcal{T}^{-}
-\end{align}
-Terminal controls are fixed: $I^+_{i,2040}=0,\ D^-_{i,2040}=0$.
-
-\paragraph{Offer/cost linkage and learning-by-doing.}
-\begin{align}
-p_{i,i,t} &= c^{man}_{i,t} && \forall i,t \\
-W_{i,2025} &= 0 && \forall i \\
-W_{i,2030} &= W_{i,2025}+y_{2025}\sum_j x_{i,j,2025} && \forall i \\
-W_{i,2035} &= W_{i,2030}+y_{2030}\sum_j x_{i,j,2030} && \forall i \\
-W_{i,2040} &= W_{i,2035}+y_{2035}\sum_j x_{i,j,2035} && \forall i \\
-c^{man}_{i,t} &= c^{base}_i-\theta^{lbd}_i W_{i,t} && \forall i,t \\
-c^{man}_{i,t} &\ge c^{floor}_i && \forall i,t
-\end{align}
-
-\section*{Player Objective (for strategic player $r\in\mathcal{P}$)}
-Each player solves:
-\begin{align}
-\max \ \Phi_r
-&= \sum_{t\in\mathcal{T}} \beta_t y_t
-\Bigg[
-\underbrace{a_{r,t}x^{dem}_{r,t}-\frac{b_{r,t}}{2}(x^{dem}_{r,t})^2-\lambda_{r,t}x^{dem}_{r,t}}_{\text{consumer-surplus term}}
-\nonumber\\
-&\qquad\qquad\qquad
-+\underbrace{\sum_{j\in\mathcal{R}} \left(\lambda_{j,t}-c^{man}_{r,t}-c^{ship}_{r,j}\right)x_{r,j,t}}_{\text{producer term}}
-- f^{hold}_r K_{r,t} - c^{inv}_r I^+_{r,t}
-\nonumber\\
-&\qquad\qquad\qquad
-- \frac{\rho^p_r}{2}\sum_{j\in\mathcal{R}} p_{r,j,t}^2
-- \frac{\rho^{prox}+c^{pen}_p}{2}\sum_{j\in\mathcal{R}}\left(p_{r,j,t}-p^{last}_{r,j,t}\right)^2
-\nonumber\\
-&\qquad\qquad\qquad
-- \frac{c^{pen}_q}{2}\left(Q_{r,t}-Q^{last}_{r,t}\right)^2
-- \frac{c^{pen}_{cap}}{2}\left(I^+_{r,t}-I^{+,last}_{r,t}\right)^2
-\nonumber\\
-&\qquad\qquad\qquad
-- \frac{c^{pen}_{cap}}{2}\left(D^-_{r,t}-D^{-,last}_{r,t}\right)^2
-- \frac{c^{pen}_a}{2}\left(a^{bid}_{r,t}-a^{last}_{r,t}\right)^2
-\Bigg]
-\end{align}
-subject to all constraints above.
-
-\section*{Runtime Note (current \texttt{run\_gs.py})}
-The runner forces \texttt{fix\_a\_bid\_to\_true\_dem = True}, so in practice:
+\section*{Parameters}
 \[
-a^{bid}_{i,t} = a_{i,t}\quad \forall i,t.
+\begin{alignedat}{3}
+&a_{i,t} &&[\mathrm{USD}/\mathrm{kW}] &&\text{inverse-demand intercept} \\
+&b_{i,t} &&[\mathrm{USD}/(\mathrm{kW}\cdot\mathrm{GW})] &&\text{inverse-demand slope} \\
+&D^{\max}_{i,t} &&[\mathrm{GW}] &&\text{demand cap} \\
+&K_i^0 &&[\mathrm{GW}] &&\text{initial capacity} \\
+&c^{man}_{i,t} &&[\mathrm{USD}/\mathrm{kW}] &&\text{manufacturing cost schedule} \\
+&c^{ship}_{e,i} &&[\mathrm{USD}/\mathrm{kW}] &&\text{shipping cost} \\
+&\bar p_{e,i} &&[\mathrm{USD}/\mathrm{kW}] &&\text{offer-price upper bound} \\
+&g_i^{exp} &&[\mathrm{GW/yr}\ \text{or}\ 1/\mathrm{yr}] &&\text{capacity expansion limit} \\
+&g_i^{dec} &&[1/\mathrm{yr}] &&\text{capacity decommission limit} \\
+&f_i^{hold} &&[\mathrm{mUSD}/(\mathrm{GW}\cdot\mathrm{yr})] &&\text{capacity holding cost} \\
+&c_i^{inv} &&[\mathrm{mUSD}/(\mathrm{GW}\cdot\mathrm{yr})] &&\text{investment cost} \\
+&\beta_t &&[-] &&\text{discount factor} \\
+&y_t &&[\mathrm{yr}] &&\text{years represented by block } t \\
+&\epsilon_x &&[\mathrm{USD}/(\mathrm{kW}\cdot\mathrm{GW})] &&\text{trade regularization} \\
+&\epsilon_{comp} &&[-] &&\text{complementarity relaxation} \\
+&c_q^{pen},\,c_p^{pen},\,c_a^{pen} &&[-] &&\text{proximal penalty weights} \\
+&c_q^{quad},\,c_p^{quad},\,c_a^{quad} &&[-] &&\text{economic quadratic penalty weights} \\
+&\rho^{keep},\,\rho^{sub},\,\rho^{term},\,\rho^{dec} &&[-] &&\text{capacity-policy coefficients}
+\end{alignedat}
+\]
+
+\section*{Sets}
+\[
+\mathcal{R}:\text{ regions},\qquad
+\mathcal{P}\subseteq\mathcal{R}:\text{ strategic players},\qquad
+\mathcal{T}:\text{ time periods},\qquad
+\mathcal{T}^{-}=\mathcal{T}\setminus\{t^*\},\qquad
+t_0=\min\mathcal{T},\qquad
+t^*=\max\mathcal{T}.
+\]
+\[
+e\in\mathcal{R}\ \text{(exporter)},\qquad
+i,j\in\mathcal{R}\ \text{(importer / market)},\qquad
+t\in\mathcal{T},\qquad
+r\in\mathcal{P}\ \text{(active player)}.
+\]
+
+\section*{LLP Primal}
+\begin{align}
+\min_{x,x^{dem}} \quad
+z^{LLP}
+= {} &
+\sum_{t\in\mathcal{T}}\sum_{e\in\mathcal{R}}\sum_{i\in\mathcal{R}}
+\left(p_{e,i,t}+c^{ship}_{e,i}\right)x_{e,i,t}
++ \sum_{t\in\mathcal{T}}\sum_{e\in\mathcal{R}}\sum_{i\in\mathcal{R}}
+\frac{\epsilon_x}{2}x_{e,i,t}^2
+\nonumber\\
+&-
+\sum_{t\in\mathcal{T}}\sum_{i\in\mathcal{R}}
+\left(
+a^{bid}_{i,t}x^{dem}_{i,t}
+- \frac{b_{i,t}}{2}(x^{dem}_{i,t})^2
+\right)
+\end{align}
+\begin{align}
+\sum_{e\in\mathcal{R}} x_{e,i,t} - x^{dem}_{i,t} &= 0
+&& \forall i,t
+&& \{\lambda_{i,t}\}
+\label{eq:llp-bal}
+\\
+Q_{e,t} - \sum_{i\in\mathcal{R}} x_{e,i,t} &\ge 0
+&& \forall e,t
+&& \{\mu^{offer}_{e,t}\ge 0\}
+\label{eq:llp-cap}
+\\
+D^{\max}_{i,t} - x^{dem}_{i,t} &\ge 0
+&& \forall i,t
+&& \{\beta^{dem}_{i,t}\ge 0\}
+\label{eq:llp-dem-up}
+\\
+x^{dem}_{i,t} &\ge 0
+&& \forall i,t
+&& \{\psi_{i,t}\ge 0\}
+\label{eq:llp-dem-lo}
+\\
+x_{e,i,t} &\ge 0
+&& \forall e,i,t
+&& \{\gamma_{e,i,t}\ge 0\}.
+\label{eq:llp-x-lo}
+\end{align}
+
+\section*{LLP KKTs}
+\begin{align}
+\frac{\partial \mathcal{L}^{LLP}}{\partial x_{e,i,t}}:\quad
+\left(p_{e,i,t}+c^{ship}_{e,i}\right)
++ \epsilon_x x_{e,i,t}
+- \lambda_{i,t}
++ \mu^{offer}_{e,t}
+- \gamma_{e,i,t}
+&= 0
+&& \forall e,i,t
+\\
+\frac{\partial \mathcal{L}^{LLP}}{\partial x^{dem}_{i,t}}:\quad
+-a^{bid}_{i,t}
++ b_{i,t}x^{dem}_{i,t}
++ \lambda_{i,t}
++ \beta^{dem}_{i,t}
+- \psi_{i,t}
+&= 0
+&& \forall i,t
+\end{align}
+\begin{align}
+\mu^{offer}_{e,t} &\ge 0
+&& \forall e,t
+\\
+\gamma_{e,i,t} &\ge 0
+&& \forall e,i,t
+\\
+\beta^{dem}_{i,t} &\ge 0
+&& \forall i,t
+\\
+\psi_{i,t} &\ge 0
+&& \forall i,t
+\\
+\lambda_{i,t} &\in \mathbb{R}
+&& \forall i,t
+\end{align}
+\begin{align}
+0 \le \mu^{offer}_{e,t} \perp
+\left(Q_{e,t} - \sum_{i\in\mathcal{R}} x_{e,i,t}\right) &\ge 0
+&& \forall e,t
+\\
+0 \le \gamma_{e,i,t} \perp x_{e,i,t} &\ge 0
+&& \forall e,i,t
+\\
+0 \le \beta^{dem}_{i,t} \perp
+\left(D^{\max}_{i,t} - x^{dem}_{i,t}\right) &\ge 0
+&& \forall i,t
+\\
+0 \le \psi_{i,t} \perp x^{dem}_{i,t} &\ge 0
+&& \forall i,t
+\end{align}
+\[
+\text{implemented relaxation:}\qquad
+\mu^{offer}_{e,t}\!\left(Q_{e,t}-\sum_i x_{e,i,t}\right)\le \epsilon_{comp},\quad
+\gamma_{e,i,t}x_{e,i,t}\le \epsilon_{comp},\quad
+\beta^{dem}_{i,t}\!\left(D^{\max}_{i,t}-x^{dem}_{i,t}\right)\le \epsilon_{comp},\quad
+\psi_{i,t}x^{dem}_{i,t}\le \epsilon_{comp}.
+\]
+
+\section*{ULP Primal}
+\begin{align}
+\max \quad \Pi_r
+= {} &
+\sum_{t\in\mathcal{T}} \beta_t y_t
+\Bigg[
+\left(
+a_{r,t}x^{dem}_{r,t}
+- \frac{b_{r,t}}{2}(x^{dem}_{r,t})^2
+- \lambda_{r,t}x^{dem}_{r,t}
+\right)
+\nonumber\\
+&\qquad\qquad
++ \sum_{j\in\mathcal{R}}
+\left(
+\lambda_{j,t}
+- c^{man}_{r,t}
+- c^{ship}_{r,j}
+\right)x_{r,j,t}
+- f^{hold}_{r}K_{r,t}
+- c^{inv}_{r}I^+_{r,t}
+\nonumber\\
+&\qquad\qquad
++ \rho^{keep}K_{r,t}
++ \rho^{sub}I^+_{r,t}
+- \rho^{dec}D^-_{r,t}
+- \frac{c_q^{quad}}{2}\left(Q_{r,t}-K_{r,t}\right)^2
+\nonumber\\
+&\qquad\qquad
+- \frac{c_p^{quad}}{2}\sum_{j\in\mathcal{R}}
+\left(p_{r,j,t}-c^{man}_{r,t}\right)^2
+- \frac{c_a^{quad}}{2}\left(a_{r,t}-a^{bid}_{r,t}\right)^2
+\nonumber\\
+&\qquad\qquad
+- \frac{c_p^{pen}}{2}\sum_{j\in\mathcal{R}}
+\left(p_{r,j,t}-p^{last}_{r,j,t}\right)^2
+- \frac{c_q^{pen}}{2}\left(Q_{r,t}-Q^{last}_{r,t}\right)^2
+- \frac{c_a^{pen}}{2}\left(a^{bid}_{r,t}-a^{last}_{r,t}\right)^2
+\Bigg]
+\nonumber\\
+&\quad
++ \beta_{t^*}\rho^{term}c^{inv}_{r}\sum_{t\in\mathcal{T}} y_t I^+_{r,t}
+\end{align}
+\begin{align}
+K_{i,t_0} &= K_i^0
+&& \forall i
+\\
+K_{i,t^+} &= K_{i,t} + y_t\left(I^+_{i,t}-D^-_{i,t}\right)
+&& \forall i,\ t\in\mathcal{T}^{-}
+\\
+0 \le I^+_{i,t} &\le g_i^{exp}
+&& \forall i,\ t\in\mathcal{T}^{-}
+\qquad \text{if } g_i^{exp}\text{ is absolute}
+\\
+0 \le I^+_{i,t} &\le g_i^{exp}K_{i,t}
+&& \forall i,\ t\in\mathcal{T}^{-}
+\qquad \text{if } g_i^{exp}\text{ is proportional}
+\\
+0 \le D^-_{i,t} &\le g_i^{dec}K_{i,t}
+&& \forall i,\ t\in\mathcal{T}^{-}
+\\
+I^+_{i,t^*} = D^-_{i,t^*} &= 0
+&& \forall i
+\\
+0 \le Q_{i,t} &\le K_{i,t}
+&& \forall i,t
+\qquad \text{or } Q_{i,t}=K_{i,t}\ \text{if quantity withholding is disabled}
+\\
+p_{i,i,t} &= c^{man}_{i,t}
+&& \forall i,t
+\\
+0 \le p_{i,j,t} &\le \bar p_{i,j}
+&& \forall i,j,t
+\\
+0 \le a^{bid}_{i,t} &\le a_{i,t}
+&& \forall i,t
+\qquad \text{or } a^{bid}_{i,t}=a_{i,t}\ \text{if demand withholding is disabled}
+\\
+K_{i,t},\,x_{e,i,t},\,x^{dem}_{i,t},\,Q_{i,t} &\ge 0
+&& \forall i,e,t
+\end{align}
+\[
+\text{s.t. LLP KKT conditions above.}
 \]
 
 \end{document}

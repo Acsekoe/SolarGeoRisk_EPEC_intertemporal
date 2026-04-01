@@ -42,7 +42,7 @@ class RunConfig:
 
     # Which params_region sheet to load from the Excel input.
     # Switch to "params_region_new" (or any other sheet name) to use an alternative scenario.
-    params_region_sheet: str = "params_region_new"
+    params_region_sheet: str = "params_region"
 
     solver: str = "ipopt"
     feastol: float = 1e-4
@@ -57,7 +57,7 @@ class RunConfig:
     eps_x: float = 1e-3
     eps_comp: float = 1e-3
     workdir: str | None = None
-    convergence_mode: str = "combined"  # "strategy", "objective", or "combined"
+    convergence_mode: str = "strategy"  # "strategy", "objective", or "combined"
 
     keep_workdir: bool = False
 
