@@ -85,6 +85,11 @@ class RunConfig:
     discount_rate: float = 0.02
     base_year: int = 2025
 
+    # When set, bypasses _build_initial_state() and uses this dict directly.
+    # Keys: "Q_offer", "dK_net", "p_offer", "a_bid" — same format as _build_initial_state().
+    # Used by the sensitivity runner to inject different starting points.
+    initial_state_override: dict | None = None
+
 
 
 
@@ -479,7 +484,11 @@ def run(cfg: RunConfig) -> str:
     state: dict[str, dict] | None = None
     iter_rows: list[dict[str, object]] = []
     try:
-        init_state = _build_initial_state(data, cfg, excel_path)
+        if cfg.initial_state_override is not None:
+            init_state = cfg.initial_state_override
+            print("[CONFIG] Using externally-provided initial_state_override")
+        else:
+            init_state = _build_initial_state(data, cfg, excel_path)
         print(f"[MAIN] Starting {iters} sweeps with {solver}")
         state, iter_rows = solve_gs_intertemporal(
             data,
