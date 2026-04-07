@@ -559,9 +559,10 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
     eps_value = gp.Number(eps_comp)
 
     # Algorithmic proximal penalties (solver stabilization)
-    c_pen_q = gp.Number(float(settings.get("c_pen_q", 0.0)))
-    c_pen_p = gp.Number(float(settings.get("c_pen_p", 0.0)))
-    c_pen_a = gp.Number(float(settings.get("c_pen_a", 0.0)))
+    c_pen_q  = gp.Number(float(settings.get("c_pen_q",  0.0)))
+    c_pen_p  = gp.Number(float(settings.get("c_pen_p",  0.0)))
+    c_pen_a  = gp.Number(float(settings.get("c_pen_a",  0.0)))
+    c_pen_dk = gp.Number(float(settings.get("c_pen_dk", 0.0)))
     
     # Economic quadratic penalties (convex costs / disutility)
     c_quad_q = gp.Number(float(settings.get("c_quad_q", 0.0)))
@@ -908,6 +909,17 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
             * (Q_offer[r, T] - Q_offer_last[r, T]),
         )
 
+        pen_prox_dk = Sum(
+            T,
+            -gp.Number(0.5) * beta_p[T] * ytn_p[T] * c_pen_dk
+            * (
+                (Icap_pos[r, T] - Icap_pos_last[r, T])
+                * (Icap_pos[r, T] - Icap_pos_last[r, T])
+                + (Dcap_neg[r, T] - Dcap_neg_last[r, T])
+                * (Dcap_neg[r, T] - Dcap_neg_last[r, T])
+            ),
+        )
+
         pen_prox_a = Sum(
             T,
             -gp.Number(0.5) * beta_p[T] * ytn_p[T] * c_pen_a
@@ -927,6 +939,7 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
             + pen_quad_a
             + pen_prox_poffer
             + pen_prox_q
+            + pen_prox_dk
             + pen_prox_a
         )
 

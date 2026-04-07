@@ -21,6 +21,7 @@ dK_net modes
   "zero"          All net capacity changes initialised to 0 (no investment assumption).
   "max_growth"    dK_net = g_exp_ub * Kcap_init for every region and period.
   "half_growth"   dK_net = 0.5 * g_exp_ub * Kcap_init.
+  "mixed"         Alternating max / zero by sorted player index (even index → max, odd → 0).
   "max_decline"   dK_net = -g_dec_ub * Kcap_init (max decommissioning).
   "random_<seed>" dK_net sampled uniformly from [0, g_exp_ub * Kcap_init] with the
                   given integer seed, independently per region and period.
@@ -112,7 +113,11 @@ def _generate_player_orders(
             seen.add(key)
             orders.append((label, list(order)))
 
-    _add("default", default)
+    # Only auto-add the default order when no explicit list is given.
+    # With explicit orders the caller has expressed full intent; a spurious
+    # "default" would inflate the run count (e.g. 5×4=20 instead of 4×4=16).
+    if not explicit:
+        _add("default", default)
 
     if all_perms:
         for perm in permutations(players):
@@ -180,6 +185,16 @@ def _build_dk_init_state(data: "_it.ModelData", mode: str) -> Dict[str, Dict]:
             for tp in move_times:
                 dK_net[(r, tp)] = 0.5 * rate
 
+    elif mode == "mixed":
+        # Even-indexed players (sorted) get max growth; odd-indexed get zero.
+        for i, r in enumerate(sorted(data.players)):
+            k0 = float(kcap_init.get(r, 0.0))
+            g = float(g_exp_map.get(r, 0.0))
+            rate = g if g_exp_is_abs else g * k0
+            val = rate if i % 2 == 0 else 0.0
+            for tp in move_times:
+                dK_net[(r, tp)] = val
+
     elif mode == "max_decline":
         for r in data.players:
             k0 = float(kcap_init.get(r, 0.0))
@@ -217,9 +232,12 @@ def _build_dk_init_state(data: "_it.ModelData", mode: str) -> Dict[str, Dict]:
         for tp in times
     }
 
-    # p_offer at midpoint of bilateral price upper-bound
+    # p_offer initialised to exporter's manufacturing cost (c_man_t if available, else c_man).
+    # This is the competitive floor price for each arc and period.
     p_offer: Dict[Tuple[str, str, str], float] = {
-        (ex, im, tp): 0.5 * float(data.p_offer_ub[(ex, im)])
+        (ex, im, tp): float(
+            (data.c_man_t or {}).get((ex, tp), data.c_man.get(ex, 0.0))
+        )
         for ex in data.regions
         for im in data.regions
         for tp in times
@@ -304,19 +322,22 @@ def run_sensitivity(spec: SensitivitySpec) -> str:
 
     print(
         f"[SENSITIVITY] {len(combos)} runs: "
-        f"{len(player_orders)} player orderings × {len(spec.dk_init_modes)} dk_init modes"
+        f"{len(player_orders)} player orderings × {len(spec.dk_init_modes)} dk_init modes",
+        flush=True,
     )
-    print(f"[SENSITIVITY] Player orderings: {[lbl for lbl, _ in player_orders]}")
-    print(f"[SENSITIVITY] dk_init modes:    {spec.dk_init_modes}")
-    print(f"[SENSITIVITY] Output dir:       {spec.out_dir}")
+    print(f"[SENSITIVITY] Player orderings: {[lbl for lbl, _ in player_orders]}", flush=True)
+    print(f"[SENSITIVITY] dk_init modes:    {spec.dk_init_modes}", flush=True)
+    print(f"[SENSITIVITY] Output dir:       {spec.out_dir}", flush=True)
 
     summary_rows: List[Dict[str, object]] = []
     run_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
 
     for run_idx, ((order_label, order), dk_mode) in enumerate(combos, 1):
         print(
-            f"\n[SENSITIVITY] Run {run_idx}/{len(combos)} — "
-            f"order={order_label} ({' > '.join(order)})  dk_init={dk_mode}"
+            f"\n[SENSITIVITY] ── Run {run_idx}/{len(combos)} ──────────────────────────────────\n"
+            f"[SENSITIVITY] order={order_label}  ({' > '.join(order)})\n"
+            f"[SENSITIVITY] dk_init={dk_mode}",
+            flush=True,
         )
         t0 = time.perf_counter()
 
@@ -330,7 +351,6 @@ def run_sensitivity(spec: SensitivitySpec) -> str:
         cfg = dataclasses.replace(
             spec.base_cfg,
             player_order=order,
-            force_ch_last=False,   # respect the explicit ordering we're testing
             initial_state_override=init_state,
             out_dir=run_out_dir,
             plots_dir=os.path.join(run_out_dir, "plots"),
@@ -353,14 +373,15 @@ def run_sensitivity(spec: SensitivitySpec) -> str:
             print(
                 f"[SENSITIVITY] Run {run_idx} done in {elapsed:.1f}s — "
                 f"r_strat={row.get('r_strat_final', '?'):.4g}  "
-                f"iters={row.get('n_iters', '?')}"
+                f"iters={row.get('n_iters', '?')}",
+                flush=True,
             )
         except Exception as exc:
             elapsed = time.perf_counter() - t0
             row["status"] = f"failed: {exc}"
             row["elapsed_s"] = round(elapsed, 1)
             row["output_path"] = ""
-            print(f"[SENSITIVITY] Run {run_idx} FAILED after {elapsed:.1f}s: {exc}")
+            print(f"[SENSITIVITY] Run {run_idx} FAILED after {elapsed:.1f}s: {exc}", flush=True)
             traceback.print_exc()
 
         summary_rows.append(row)
@@ -394,12 +415,67 @@ def run_sensitivity(spec: SensitivitySpec) -> str:
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    """Run a default sensitivity analysis with all permutations and three dk_init modes."""
+    """Run the 4×4 = 16-scenario sensitivity analysis (max 30 GS sweeps each).
+
+    Player-order axis (China at four positions across the 6-player sweep):
+      ch_first    : ch → us → apac → af → row → eu
+      ch_mid_early: us → apac → ch  → af → row → eu  (position 3 of 6)
+      ch_mid_late : us → apac → af  → ch → row → eu  (position 4 of 6)
+      ch_last     : us → apac → af  → row → eu → ch
+
+    dK_net initial-condition axis:
+      zero       : all net capacity changes = 0
+      half_growth: all at 50 % of max expansion rate
+      max_growth : all at 100 % of max expansion rate
+      mixed      : even-indexed players at max, odd-indexed at 0
+
+    All damping/regularisation values match run_gs.py defaults:
+      omega=0.7, c_pen_q/p/a=0.1, c_quad_q/p/a=0.1, tol_strat=1e-2.
+    """
+    non_ch = ["us", "apac", "af", "row", "eu"]
+    player_orders = [
+        ["ch"] + non_ch,                                # ch first  (pos 1)
+        ["us", "apac", "ch", "af", "row", "eu"],        # ch mid-early (pos 3)
+        ["us", "apac", "af", "ch", "row", "eu"],        # ch mid-late  (pos 4)
+        non_ch + ["ch"],                                # ch last   (pos 6)
+    ]
+
     spec = SensitivitySpec(
-        base_cfg=RunConfig(),
-        all_permutations=True,
-        dk_init_modes=["zero", "half_growth", "max_growth"],
-        run_label="sensitivity",
+        base_cfg=RunConfig(
+            # Input scenario
+            params_region_sheet="params_region_new",
+            # Fix strategic variables to their competitive benchmarks
+            fix_q_offer_to_kcap=True,
+            fix_a_bid_to_true_dem=True,
+            # GS algorithm
+            iters=30,
+            omega=0.7,
+            tol_strat=1e-2,
+            tol_obj=1e-2,
+            stable_iters=3,
+            convergence_mode="strategy",
+            exclude_terminal_from_convergence=True,
+            # Solver
+            solver="ipopt",
+            feastol=1e-4,
+            opttol=1e-4,
+            eps_x=1e-3,
+            eps_comp=1e-3,
+            # Proximal (algorithmic) penalties
+            c_pen_q=0.1,
+            c_pen_p=0.1,
+            c_pen_a=0.1,
+            c_pen_dk=0.075,
+            # Economic quadratic penalties
+            c_quad_q=0.1,
+            c_quad_p=0.1,
+            c_quad_a=0.1,
+        ),
+        player_orders=player_orders,
+        all_permutations=False,
+        n_random_orders=0,
+        dk_init_modes=["zero", "half_growth", "max_growth", "mixed"],
+        run_label="sensitivity_4x4",
     )
     run_sensitivity(spec)
 

@@ -59,6 +59,11 @@ class RunConfig:
     workdir: str | None = None
     convergence_mode: str = "strategy"  # "strategy", "objective", or "combined"
 
+    # Exclude the terminal buffer period (times[-1], i.e. 2045) from the
+    # convergence metric.  Also drops the last move_time (2040→2045 transition)
+    # from the dK_net convergence check.  Useful when 2045 is a dummy period.
+    exclude_terminal_from_convergence: bool = False
+
     keep_workdir: bool = False
 
     knitro_outlev: int | None = None
@@ -68,9 +73,10 @@ class RunConfig:
 
     # Algorithmic proximal penalties: -0.5 * c_pen * (X - X_last)^2 added to ULP objective.
     # Set to 0.0 to disable. Larger values shrink step sizes and improve GS stability.
-    c_pen_q: float = 0.1   # For Q_offer
-    c_pen_p: float = 0.1   # For p_offer
-    c_pen_a: float = 0.1   # For a_bid
+    c_pen_q:  float = 0.1   # For Q_offer
+    c_pen_p:  float = 0.1   # For p_offer
+    c_pen_a:  float = 0.1   # For a_bid
+    c_pen_dk: float = 0.1   # For Icap_pos / Dcap_neg (net capacity changes)
 
     # Economic quadratic penalties: -0.5 * c_quad * X^2
     # Represents convex costs or disutility.
@@ -102,6 +108,10 @@ class RunConfig:
     # Keys: "Q_offer", "dK_net", "p_offer", "a_bid" — same format as _build_initial_state().
     # Used by the sensitivity runner to inject different starting points.
     initial_state_override: dict | None = None
+
+    # Override the module-level PLAYER_ORDER for this run.
+    # Used by the sensitivity runner to vary sweep order across runs.
+    player_order: List[str] | None = None
 
 
 
@@ -245,6 +255,7 @@ def _apply_data_overrides(data, cfg: RunConfig) -> None:
     data.settings["c_pen_q"]   = float(cfg.c_pen_q)
     data.settings["c_pen_p"]   = float(cfg.c_pen_p)
     data.settings["c_pen_a"]   = float(cfg.c_pen_a)
+    data.settings["c_pen_dk"]  = float(cfg.c_pen_dk)
     
     # Economic quadratic scalars
     data.settings["c_quad_q"]  = float(cfg.c_quad_q)
@@ -463,7 +474,8 @@ def run(cfg: RunConfig) -> str:
     print(f"[CONFIG] iters={iters} omega={omega:g} tol_rel={tol_rel:g} stable_iters={stable_iters}")
     print(f"[CONFIG] eps_x={float(data.eps_x):g} eps_comp={float(data.eps_comp):g}")
     print(f"[CONFIG] convergence_mode={convergence_mode}")
-    print(f"[CONFIG] player_order={PLAYER_ORDER}")
+    effective_order = cfg.player_order if cfg.player_order is not None else PLAYER_ORDER
+    print(f"[CONFIG] player_order={effective_order}")
     print(f"[CONFIG] workdir={workdir}{' (keep)' if cfg.keep_workdir else ' (auto-cleanup)'}")
 
     sweep_times: list[float] = []
@@ -473,10 +485,10 @@ def run(cfg: RunConfig) -> str:
     def _iter_log(it: int, state: dict[str, dict], r_strat: float, stable_count: int) -> None:
         sweep_elapsed = time.perf_counter() - timing_state["sweep_start"]
         sweep_times.append(sweep_elapsed)
-        print(f"[ITER {it}] r_strat={r_strat:.6g} stable_count={stable_count} sweep_time={sweep_elapsed:.2f}s")
+        print(f"[ITER {it}] r_strat={r_strat:.6g} stable_count={stable_count} sweep_time={sweep_elapsed:.2f}s", flush=True)
         # Show shuffled player order if available
         if "_sweep_order" in state:
-            print(f"[ITER {it}] player order: {state['_sweep_order']}")
+            print(f"[ITER {it}] player order: {state['_sweep_order']}", flush=True)
         _print_state_summary(data=data, regions=list(data.regions), state=state, tag=f"ITER {it}")
         _append_detailed_iter_rows(
             data=data,
@@ -520,7 +532,8 @@ def run(cfg: RunConfig) -> str:
             iter_callback=_iter_log,
             initial_state=init_state,
             convergence_mode=convergence_mode,
-            player_order=PLAYER_ORDER,
+            player_order=effective_order,
+            exclude_terminal_from_convergence=cfg.exclude_terminal_from_convergence,
         )
         _print_state_summary(data=data, regions=list(data.regions), state=state, tag="FINAL")
 
@@ -561,6 +574,7 @@ def run(cfg: RunConfig) -> str:
                 "c_pen_q":               float(cfg.c_pen_q),
                 "c_pen_p":               float(cfg.c_pen_p),
                 "c_pen_a":               float(cfg.c_pen_a),
+                "c_pen_dk":              float(cfg.c_pen_dk),
                 "c_quad_q":              float(cfg.c_quad_q),
                 "c_quad_p":              float(cfg.c_quad_p),
                 "c_quad_a":              float(cfg.c_quad_a),
