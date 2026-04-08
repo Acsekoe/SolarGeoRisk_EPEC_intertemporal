@@ -26,7 +26,7 @@ except ImportError:
 # Define project root relative to this script
 SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(SCRIPTS_DIR)
-_VALID_CONVERGENCE_MODES = {"strategy", "objective", "combined"}
+_VALID_CONVERGENCE_MODES = {"strategy", "objective", "combined", "absolute"}
 
 # ── Player sweep order ────────────────────────────────────────────────────────
 # Edit this list to control the Gauss-Seidel sweep order.
@@ -57,7 +57,14 @@ class RunConfig:
     eps_x: float = 1e-3
     eps_comp: float = 1e-3
     workdir: str | None = None
-    convergence_mode: str = "strategy"  # "strategy", "objective", or "combined"
+    convergence_mode: str = "strategy"  # "strategy", "objective", "combined", or "absolute"
+
+    # --- Absolute convergence thresholds (used when convergence_mode="absolute") ---
+    # tol_p_abs: max allowed sweep-to-sweep change in p_offer [USD/kW]
+    # tol_dk_abs: max allowed sweep-to-sweep change in dK_net [GW/yr]
+    # Both must hold for stable_iters consecutive sweeps.
+    tol_p_abs:  float = 1.0    # $1/kW — small relative to p_offer range ($163–$353)
+    tol_dk_abs: float = 0.1    # 0.1 GW/yr — small relative to AF's max (0.93) and CH's (27.4)
 
     # Exclude the terminal buffer period (times[-1], i.e. 2045) from the
     # convergence metric.  Also drops the last move_time (2040→2045 transition)
@@ -76,7 +83,13 @@ class RunConfig:
     c_pen_q:  float = 0.1   # For Q_offer
     c_pen_p:  float = 0.1   # For p_offer
     c_pen_a:  float = 0.1   # For a_bid
-    c_pen_dk: float = 0.1   # For Icap_pos / Dcap_neg (net capacity changes)
+    c_pen_dk: float = 0.1   # For Icap_pos / Dcap_neg (starting value / constant if no ramp)
+
+    # Penalty annealing: ramp c_pen_dk from c_pen_dk (start) to c_pen_dk_final over
+    # c_pen_ramp_iters sweeps, then hold at c_pen_dk_final.
+    # Set c_pen_dk_final=None to disable annealing (constant penalty throughout).
+    c_pen_dk_final: float | None = None
+    c_pen_ramp_iters: int = 10
 
     # Economic quadratic penalties: -0.5 * c_quad * X^2
     # Represents convex costs or disutility.
@@ -485,7 +498,15 @@ def run(cfg: RunConfig) -> str:
     def _iter_log(it: int, state: dict[str, dict], r_strat: float, stable_count: int) -> None:
         sweep_elapsed = time.perf_counter() - timing_state["sweep_start"]
         sweep_times.append(sweep_elapsed)
-        print(f"[ITER {it}] r_strat={r_strat:.6g} stable_count={stable_count} sweep_time={sweep_elapsed:.2f}s", flush=True)
+        max_abs_dp      = state.get("_max_abs_dp",       float("nan"))
+        max_abs_ddk     = state.get("_max_abs_ddk",      float("nan"))
+        c_pen_dk_cur    = state.get("_c_pen_dk_current", float("nan"))
+        print(
+            f"[ITER {it}] |Δp|={max_abs_dp:.3g} $/kW  |Δdk|={max_abs_ddk:.3g} GW/yr"
+            f"  c_pen_dk={c_pen_dk_cur:.3g}  r_strat={r_strat:.4g}"
+            f"  stable={stable_count}  t={sweep_elapsed:.2f}s",
+            flush=True,
+        )
         # Show shuffled player order if available
         if "_sweep_order" in state:
             print(f"[ITER {it}] player order: {state['_sweep_order']}", flush=True)
@@ -534,6 +555,10 @@ def run(cfg: RunConfig) -> str:
             convergence_mode=convergence_mode,
             player_order=effective_order,
             exclude_terminal_from_convergence=cfg.exclude_terminal_from_convergence,
+            tol_p_abs=cfg.tol_p_abs,
+            tol_dk_abs=cfg.tol_dk_abs,
+            c_pen_dk_final=cfg.c_pen_dk_final,
+            c_pen_ramp_iters=cfg.c_pen_ramp_iters,
         )
         _print_state_summary(data=data, regions=list(data.regions), state=state, tag="FINAL")
 

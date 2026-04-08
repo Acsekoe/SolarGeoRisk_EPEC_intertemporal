@@ -454,6 +454,8 @@ def main() -> None:
             tol_obj=1e-2,
             stable_iters=3,
             convergence_mode="strategy",
+            tol_p_abs=1.0,      # $1/kW max sweep-to-sweep change in p_offer
+            tol_dk_abs=0.1,     # 0.1 GW/yr max sweep-to-sweep change in dK_net
             exclude_terminal_from_convergence=True,
             # Solver
             solver="ipopt",
@@ -465,7 +467,11 @@ def main() -> None:
             c_pen_q=0.1,
             c_pen_p=0.1,
             c_pen_a=0.1,
-            c_pen_dk=0.075,
+            # dK penalty annealing: start loose (players explore freely),
+            # ramp up over first 10 sweeps to stabilize around equilibrium.
+            c_pen_dk=0.02,          # start: loose — allow large investment steps
+            c_pen_dk_final=0.4,     # end:   tight — pin near fixed point
+            c_pen_ramp_iters=10,    # ramp duration in sweeps
             # Economic quadratic penalties
             c_quad_q=0.1,
             c_quad_p=0.1,

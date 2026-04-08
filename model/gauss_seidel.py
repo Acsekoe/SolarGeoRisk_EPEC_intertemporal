@@ -27,6 +27,10 @@ def solve_gs_intertemporal(
     player_order: List[str] | None = None,
     force_ch_last: bool = True,
     exclude_terminal_from_convergence: bool = False,
+    tol_p_abs: float = 1.0,
+    tol_dk_abs: float = 0.1,
+    c_pen_dk_final: float | None = None,
+    c_pen_ramp_iters: int = 10,
 ) -> tuple[Dict[str, Dict], List[Dict[str, object]]]:
     """Gauss-Seidel solver for the 4-period intertemporal EPEC Offer model.
 
@@ -166,6 +170,21 @@ def solve_gs_intertemporal(
     if solver_options:
         solve_kwargs["solver_options"] = solver_options
 
+    # Penalty annealing setup: read initial value from ctx, compute ramp end.
+    _c_pen_dk_param = ctx.params.get("c_pen_dk_scalar")
+    _c_pen_dk_start = float(_c_pen_dk_param.records.iloc[0, 0]) if _c_pen_dk_param is not None else 0.0
+    _c_pen_dk_end   = float(c_pen_dk_final) if c_pen_dk_final is not None else _c_pen_dk_start
+    _do_ramp        = (c_pen_dk_final is not None) and (_c_pen_dk_param is not None)
+
+    def _scheduled_c_pen_dk(it: int) -> float:
+        """Linear ramp from start (iter 1) to end (iter c_pen_ramp_iters), then hold."""
+        if not _do_ramp:
+            return _c_pen_dk_start
+        if c_pen_ramp_iters <= 1:
+            return _c_pen_dk_end
+        frac = min((it - 1) / (c_pen_ramp_iters - 1), 1.0)
+        return _c_pen_dk_start + frac * (_c_pen_dk_end - _c_pen_dk_start)
+
     def _update_prox_reference() -> None:
         # p_offer_last
         poffer_last = ctx.params.get("p_offer_last")
@@ -203,6 +222,11 @@ def solve_gs_intertemporal(
 
     for it in range(1, iters + 1):
         r_strat = 0.0
+
+        # Update penalty annealing
+        c_pen_dk_current = _scheduled_c_pen_dk(it)
+        if _do_ramp and _c_pen_dk_param is not None:
+            _c_pen_dk_param.setRecords(c_pen_dk_current)
 
         prev_Q = dict(theta_Q)
         prev_dK_net = dict(theta_dK_net)
@@ -288,17 +312,20 @@ def solve_gs_intertemporal(
                 theta_obj[p] = float(obj_sol.get(p, 0.0))
 
         # ---- Convergence metrics ----
-        # theta_Kcap is fully determined by theta_dK_net (derived, not independent),
-        # so it is excluded from r_strat to avoid double-counting capacity changes.
-        # theta_Q is the independent offer strategy; it is always included.
         # When exclude_terminal_from_convergence=True the terminal buffer period
         # (times[-1], e.g. 2045) is dropped from the times loop, and the last
         # move_time (e.g. the 2040→2045 transition) is dropped from move_times.
         conv_times = times[:-1] if exclude_terminal_from_convergence and len(times) > 1 else times
         conv_move_times = move_times[:-1] if exclude_terminal_from_convergence and len(move_times) > 1 else move_times
 
+        # Track absolute changes for "absolute" convergence mode
+        max_abs_dp  = 0.0   # max |Δp_offer|  across all arcs/periods  [USD/kW]
+        max_abs_ddk = 0.0   # max |ΔdK_net|   across all players/periods [GW/yr]
+
         for r in data.players:
             for tp in conv_move_times:
+                abs_dk = abs(theta_dK_net[(r, tp)] - prev_dK_net[(r, tp)])
+                max_abs_ddk = max(max_abs_ddk, abs_dk)
                 r_strat = max(r_strat, _scaled_change(theta_dK_net[(r, tp)], prev_dK_net[(r, tp)], _dk_scale(r)))
             for tp in conv_times:
                 r_strat = max(r_strat, _scaled_change(theta_Q[(r, tp)], prev_Q[(r, tp)], _q_scale(r)))
@@ -311,6 +338,8 @@ def solve_gs_intertemporal(
             for im in data.regions:
                 for tp in conv_times:
                     key = (ex, im, tp)
+                    abs_dp = abs(theta_p_offer[key] - prev_poffer[key])
+                    max_abs_dp = max(max_abs_dp, abs_dp)
                     r_strat = max(r_strat, _scaled_change(theta_p_offer[key], prev_poffer[key], _p_scale(ex, im)))
 
         r_obj = 0.0
@@ -322,6 +351,8 @@ def solve_gs_intertemporal(
             metric_met = (r_strat <= tol_rel) and (r_obj <= tol_obj)
         elif convergence_mode == "objective":
             metric_met = r_obj <= tol_obj
+        elif convergence_mode == "absolute":
+            metric_met = (max_abs_dp <= tol_p_abs) and (max_abs_ddk <= tol_dk_abs)
         else:  # "strategy"
             metric_met = r_strat <= tol_rel
 
@@ -330,6 +361,9 @@ def solve_gs_intertemporal(
             "iter": it,
             "r_strat": float(r_strat),
             "r_obj": float(r_obj),
+            "max_abs_dp": float(max_abs_dp),
+            "max_abs_ddk": float(max_abs_ddk),
+            "c_pen_dk": float(c_pen_dk_current),
             "stable_count": int(stable_count),
             "omega": float(omega),
         }
@@ -340,8 +374,14 @@ def solve_gs_intertemporal(
         if iter_callback is not None:
             if shuffle_players:
                 last_state["_sweep_order"] = list(sweep_order)
+            last_state["_max_abs_dp"]      = float(max_abs_dp)
+            last_state["_max_abs_ddk"]     = float(max_abs_ddk)
+            last_state["_c_pen_dk_current"] = float(c_pen_dk_current)
             iter_callback(it, last_state, float(r_strat), int(stable_count))
-            last_state.pop("_sweep_order", None)
+            last_state.pop("_sweep_order",      None)
+            last_state.pop("_max_abs_dp",       None)
+            last_state.pop("_max_abs_ddk",      None)
+            last_state.pop("_c_pen_dk_current", None)
 
         if stable_count >= stable_iters:
             break

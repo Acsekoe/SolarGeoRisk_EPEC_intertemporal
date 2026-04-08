@@ -558,11 +558,12 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
     eps_comp = float(data.eps_comp)
     eps_value = gp.Number(eps_comp)
 
-    # Algorithmic proximal penalties (solver stabilization)
-    c_pen_q  = gp.Number(float(settings.get("c_pen_q",  0.0)))
-    c_pen_p  = gp.Number(float(settings.get("c_pen_p",  0.0)))
-    c_pen_a  = gp.Number(float(settings.get("c_pen_a",  0.0)))
-    c_pen_dk = gp.Number(float(settings.get("c_pen_dk", 0.0)))
+    # Algorithmic proximal penalties — stored as scalar Parameters so gauss_seidel.py
+    # can update them between iterations (penalty annealing) without rebuilding the model.
+    c_pen_q  = Parameter(m, "c_pen_q_scalar",  records=float(settings.get("c_pen_q",  0.0)))
+    c_pen_p  = Parameter(m, "c_pen_p_scalar",  records=float(settings.get("c_pen_p",  0.0)))
+    c_pen_a  = Parameter(m, "c_pen_a_scalar",  records=float(settings.get("c_pen_a",  0.0)))
+    c_pen_dk = Parameter(m, "c_pen_dk_scalar", records=float(settings.get("c_pen_dk", 0.0)))
     
     # Economic quadratic penalties (convex costs / disutility)
     c_quad_q = gp.Number(float(settings.get("c_quad_q", 0.0)))
@@ -977,6 +978,10 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
             "Icap_pos_last": Icap_pos_last,
             "Dcap_neg_last": Dcap_neg_last,
             "a_bid_last":    a_bid_last,
+            "c_pen_q_scalar":  c_pen_q,
+            "c_pen_p_scalar":  c_pen_p,
+            "c_pen_a_scalar":  c_pen_a,
+            "c_pen_dk_scalar": c_pen_dk,
         },
         vars={
             "Kcap": Kcap,
