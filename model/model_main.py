@@ -681,6 +681,10 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
     mu_offer.up[R, T] = mu_offer_ub[R]
     gamma.up[exp, imp, T] = gamma_ub[exp, imp]
 
+    if bool(settings.get("force_mu_offer_zero", False)):
+        mu_offer.lo[R, T] = 0.0
+        mu_offer.up[R, T] = 0.0
+
     # =====================================================================
     # Step 4 — LLP equations (time-indexed)
     # =====================================================================
@@ -844,11 +848,15 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
             ),
         )
 
-        # Producer term
+        # Producer term — subtract mu_offer so that capacity scarcity rents
+        # do not enter the exporter's objective.  Revenue is now based on the
+        # player's own offer price (via KKT substitution) rather than on lam,
+        # removing the incentive to withhold capacity.
         producer_term_t = Sum(
             [j, T],
             beta_p[T] * ytn_p[T] * (
                 lam_var[j, T]
+                - mu_offer[r, T]
                 - c_man_t_p[r, T]
                 - c_ship[r, j]
             ) * x[r, j, T],
@@ -867,9 +875,10 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
             - beta_p[T] * ytn_p[T] * decommission_penalty * Dcap_neg[r, T],
         )
 
-        terminal_capacity_bonus = (
-            beta_p[times[-1]] * terminal_capacity_value * c_inv_p[r]
-            * Sum(T, ytn_p[T] * Icap_pos[r, T])
+        terminal_capacity_bonus = Sum(
+            T,
+            beta_p[T] * terminal_capacity_value * c_inv_p[r]
+            * ytn_p[T] * Icap_pos[r, T],
         )
 
         # ---- Penalties (replicated per period) ----

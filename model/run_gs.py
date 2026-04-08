@@ -13,14 +13,20 @@ try:
     from .data_prep import load_data_from_excel, load_initial_state
     from .gauss_seidel import solve_gs_intertemporal
     from . import model_main as _it
-    from .plot_results import write_default_plots
     from .results_writer import write_results_excel
+    try:
+        from .plot_results import write_default_plots
+    except ImportError:
+        write_default_plots = None
 except ImportError:
     from data_prep import load_data_from_excel, load_initial_state
     from gauss_seidel import solve_gs_intertemporal
     import model_main as _it
-    from plot_results import write_default_plots
     from results_writer import write_results_excel
+    try:
+        from plot_results import write_default_plots
+    except ImportError:
+        write_default_plots = None
 
 
 # Define project root relative to this script
@@ -31,7 +37,8 @@ _VALID_CONVERGENCE_MODES = {"strategy", "objective", "combined", "absolute"}
 # ── Player sweep order ────────────────────────────────────────────────────────
 # Edit this list to control the Gauss-Seidel sweep order.
 # Every strategic player must appear exactly once (case-insensitive).
-PLAYER_ORDER: List[str] = ["ch", "us", "apac", "af", "row", "eu"]
+PLAYER_ORDER: List[str] = ["ch", "apac", "row", "eu", "us", "af"] 
+
 # ─────────────────────────────────────────────────────────────────────────────
 
 @dataclass(frozen=True)
@@ -42,34 +49,38 @@ class RunConfig:
 
     # Which params_region sheet to load from the Excel input.
     # Switch to "params_region_new" (or any other sheet name) to use an alternative scenario.
-    params_region_sheet: str = "params_region"
+    params_region_sheet: str = "params_region_new"
 
     solver: str = "ipopt"
     feastol: float = 1e-4
     opttol: float = 1e-4
     
     method: str = "gauss_seidel"
-    iters: int = 15
-    omega: float = 0.7
+    iters: int = 30
+    omega: float = 0.8
+    adaptive_omega: bool = True
+    omega_min: float = 0.4
+    omega_aggressive_sweeps: int = 5
+    omega_ramp_iters: int = 10
     tol_strat: float = 1e-2
     tol_obj: float = 1e-2
     stable_iters: int = 3
     eps_x: float = 1e-3
     eps_comp: float = 1e-3
     workdir: str | None = None
-    convergence_mode: str = "strategy"  # "strategy", "objective", "combined", or "absolute"
+    convergence_mode: str = "absolute"  # "strategy", "objective", "combined", or "absolute"
 
     # --- Absolute convergence thresholds (used when convergence_mode="absolute") ---
     # tol_p_abs: max allowed sweep-to-sweep change in p_offer [USD/kW]
     # tol_dk_abs: max allowed sweep-to-sweep change in dK_net [GW/yr]
     # Both must hold for stable_iters consecutive sweeps.
-    tol_p_abs:  float = 1.0    # $1/kW — small relative to p_offer range ($163–$353)
-    tol_dk_abs: float = 0.1    # 0.1 GW/yr — small relative to AF's max (0.93) and CH's (27.4)
+    tol_p_abs:  float = 2.0    # $2/kW — relaxed to avoid plateau stall
+    tol_dk_abs: float = 0.25   # 0.25 GW/yr — relaxed to avoid plateau stall
 
     # Exclude the terminal buffer period (times[-1], i.e. 2045) from the
     # convergence metric.  Also drops the last move_time (2040→2045 transition)
     # from the dK_net convergence check.  Useful when 2045 is a dummy period.
-    exclude_terminal_from_convergence: bool = False
+    exclude_terminal_from_convergence: bool = True
 
     keep_workdir: bool = False
 
@@ -80,15 +91,21 @@ class RunConfig:
 
     # Algorithmic proximal penalties: -0.5 * c_pen * (X - X_last)^2 added to ULP objective.
     # Set to 0.0 to disable. Larger values shrink step sizes and improve GS stability.
-    c_pen_q:  float = 0.1   # For Q_offer
-    c_pen_p:  float = 0.1   # For p_offer
-    c_pen_a:  float = 0.1   # For a_bid
-    c_pen_dk: float = 0.1   # For Icap_pos / Dcap_neg (starting value / constant if no ramp)
-
-    # Penalty annealing: ramp c_pen_dk from c_pen_dk (start) to c_pen_dk_final over
-    # c_pen_ramp_iters sweeps, then hold at c_pen_dk_final.
-    # Set c_pen_dk_final=None to disable annealing (constant penalty throughout).
-    c_pen_dk_final: float | None = None
+    # Each *_mid/_final field optionally defines a piecewise-linear schedule from
+    # start -> mid -> final over c_pen_ramp_iters sweeps, then holds it there.
+    # If only *_final is set, the schedule remains a simple start -> final ramp.
+    c_pen_q:  float = 0.5   # For Q_offer
+    c_pen_p:  float = 1.0   # For p_offer — high start to prevent price oscillations
+    c_pen_a:  float = 0.5   # For a_bid
+    c_pen_dk: float = 0.5   # For Icap_pos / Dcap_neg
+    c_pen_q_mid: float | None = 1.0
+    c_pen_p_mid: float | None = 2.0
+    c_pen_a_mid: float | None = 1.0
+    c_pen_dk_mid: float | None = 1.0
+    c_pen_q_final: float | None = 2.0
+    c_pen_p_final: float | None = 3.0
+    c_pen_a_final: float | None = 2.0
+    c_pen_dk_final: float | None = 2.0
     c_pen_ramp_iters: int = 10
 
     # Economic quadratic penalties: -0.5 * c_quad * X^2
@@ -106,11 +123,16 @@ class RunConfig:
 
     # Force Q_offer == Kcap for all regions and periods (no quantity withholding).
     # Eliminates mu_offer gaming; useful as a diagnostic run.
-    fix_q_offer_to_kcap: bool = False
+    fix_q_offer_to_kcap: bool = True
+
+    # Diagnostic option: fix the LLP capacity scarcity multiplier mu_offer to zero
+    # for all regions and periods, forcing prices to emerge only from p_offer,
+    # shipping costs, and the small eps_x regularization term.
+    force_mu_offer_zero: bool = False
 
     # Clamp a_bid to true demand (no strategic demand withholding).
     # Set to False to allow importers to strategically understate willingness to pay.
-    fix_a_bid_to_true_dem: bool = False
+    fix_a_bid_to_true_dem: bool = True
 
     # NPV discounting: override beta_t computed in data_prep.py.
     # 0.0 = undiscounted (block-length weighted); any positive value recomputes beta_t.
@@ -283,6 +305,9 @@ def _apply_data_overrides(data, cfg: RunConfig) -> None:
 
     # Force Q_offer == Kcap (no quantity withholding)
     data.settings["fix_q_offer_to_kcap"] = bool(cfg.fix_q_offer_to_kcap)
+
+    # Diagnostic: suppress capacity scarcity rents in LLP pricing.
+    data.settings["force_mu_offer_zero"] = bool(cfg.force_mu_offer_zero)
 
     # Discount rate for NPV computation
     data.settings["discount_rate"] = float(cfg.discount_rate)
@@ -485,6 +510,11 @@ def run(cfg: RunConfig) -> str:
     print(f"[CONFIG] Method: {method}")
     print(f"[CONFIG] Solver: {solver}  feastol={feastol:g}  opttol={opttol:g}")
     print(f"[CONFIG] iters={iters} omega={omega:g} tol_rel={tol_rel:g} stable_iters={stable_iters}")
+    print(
+        f"[CONFIG] adaptive_omega={cfg.adaptive_omega} "
+        f"omega_min={cfg.omega_min:g} omega_aggressive_sweeps={cfg.omega_aggressive_sweeps} "
+        f"omega_ramp_iters={cfg.omega_ramp_iters}"
+    )
     print(f"[CONFIG] eps_x={float(data.eps_x):g} eps_comp={float(data.eps_comp):g}")
     print(f"[CONFIG] convergence_mode={convergence_mode}")
     effective_order = cfg.player_order if cfg.player_order is not None else PLAYER_ORDER
@@ -500,13 +530,23 @@ def run(cfg: RunConfig) -> str:
         sweep_times.append(sweep_elapsed)
         max_abs_dp      = state.get("_max_abs_dp",       float("nan"))
         max_abs_ddk     = state.get("_max_abs_ddk",      float("nan"))
+        omega_cur       = state.get("_omega_current",    float("nan"))
+        omega_next      = state.get("_omega_next",       float("nan"))
+        omega_reason    = state.get("_omega_reason",     "")
+        c_pen_q_cur     = state.get("_c_pen_q_current", float("nan"))
+        c_pen_p_cur     = state.get("_c_pen_p_current", float("nan"))
+        c_pen_a_cur     = state.get("_c_pen_a_current", float("nan"))
         c_pen_dk_cur    = state.get("_c_pen_dk_current", float("nan"))
         print(
-            f"[ITER {it}] |Δp|={max_abs_dp:.3g} $/kW  |Δdk|={max_abs_ddk:.3g} GW/yr"
-            f"  c_pen_dk={c_pen_dk_cur:.3g}  r_strat={r_strat:.4g}"
+            f"[ITER {it}] |dp|={max_abs_dp:.3g} $/kW  |ddk|={max_abs_ddk:.3g} GW/yr"
+            f"  omega={omega_cur:.3g}->{omega_next:.3g}"
+            f"  c_pen=(q={c_pen_q_cur:.3g}, p={c_pen_p_cur:.3g}, a={c_pen_a_cur:.3g}, dk={c_pen_dk_cur:.3g})"
+            f"  r_strat={r_strat:.4g}"
             f"  stable={stable_count}  t={sweep_elapsed:.2f}s",
             flush=True,
         )
+        if omega_reason:
+            print(f"[ITER {it}] omega adjustment: {omega_reason}", flush=True)
         # Show shuffled player order if available
         if "_sweep_order" in state:
             print(f"[ITER {it}] player order: {state['_sweep_order']}", flush=True)
@@ -546,6 +586,10 @@ def run(cfg: RunConfig) -> str:
             solver_options=solver_opts,
             iters=iters,
             omega=omega,
+            adaptive_omega=cfg.adaptive_omega,
+            omega_min=cfg.omega_min,
+            omega_aggressive_sweeps=cfg.omega_aggressive_sweeps,
+            omega_ramp_iters=cfg.omega_ramp_iters,
             tol_rel=cfg.tol_strat,
             tol_obj=cfg.tol_obj,
             stable_iters=stable_iters,
@@ -557,8 +601,16 @@ def run(cfg: RunConfig) -> str:
             exclude_terminal_from_convergence=cfg.exclude_terminal_from_convergence,
             tol_p_abs=cfg.tol_p_abs,
             tol_dk_abs=cfg.tol_dk_abs,
+            c_pen_q_mid=cfg.c_pen_q_mid,
+            c_pen_p_mid=cfg.c_pen_p_mid,
+            c_pen_a_mid=cfg.c_pen_a_mid,
+            c_pen_dk_mid=cfg.c_pen_dk_mid,
+            c_pen_q_final=cfg.c_pen_q_final,
+            c_pen_p_final=cfg.c_pen_p_final,
+            c_pen_a_final=cfg.c_pen_a_final,
             c_pen_dk_final=cfg.c_pen_dk_final,
             c_pen_ramp_iters=cfg.c_pen_ramp_iters,
+            force_ch_last=False,
         )
         _print_state_summary(data=data, regions=list(data.regions), state=state, tag="FINAL")
 
@@ -576,6 +628,10 @@ def run(cfg: RunConfig) -> str:
                 "method":                method,
                 "iters":                 iters,
                 "omega":                 omega,
+                "adaptive_omega":        bool(cfg.adaptive_omega),
+                "omega_min":             float(cfg.omega_min),
+                "omega_aggressive_sweeps": int(cfg.omega_aggressive_sweeps),
+                "omega_ramp_iters":      int(cfg.omega_ramp_iters),
                 "tol_rel":               tol_rel,
                 "tol_obj":               float(cfg.tol_obj),
                 "stable_iters":          stable_iters,
@@ -595,11 +651,22 @@ def run(cfg: RunConfig) -> str:
                 "ytn":                   str(data.years_to_next or {}),
                 # --- Strategic demand bidding ---
                 "fix_a_bid_to_true_dem": bool(data.settings.get("fix_a_bid_to_true_dem", False)),
+                "fix_q_offer_to_kcap":   bool(data.settings.get("fix_q_offer_to_kcap", False)),
+                "force_mu_offer_zero":   bool(data.settings.get("force_mu_offer_zero", False)),
                 # --- Penalties and Scalers ---
                 "c_pen_q":               float(cfg.c_pen_q),
                 "c_pen_p":               float(cfg.c_pen_p),
                 "c_pen_a":               float(cfg.c_pen_a),
                 "c_pen_dk":              float(cfg.c_pen_dk),
+                "c_pen_q_mid":           None if cfg.c_pen_q_mid is None else float(cfg.c_pen_q_mid),
+                "c_pen_p_mid":           None if cfg.c_pen_p_mid is None else float(cfg.c_pen_p_mid),
+                "c_pen_a_mid":           None if cfg.c_pen_a_mid is None else float(cfg.c_pen_a_mid),
+                "c_pen_dk_mid":          None if cfg.c_pen_dk_mid is None else float(cfg.c_pen_dk_mid),
+                "c_pen_q_final":         None if cfg.c_pen_q_final is None else float(cfg.c_pen_q_final),
+                "c_pen_p_final":         None if cfg.c_pen_p_final is None else float(cfg.c_pen_p_final),
+                "c_pen_a_final":         None if cfg.c_pen_a_final is None else float(cfg.c_pen_a_final),
+                "c_pen_dk_final":        None if cfg.c_pen_dk_final is None else float(cfg.c_pen_dk_final),
+                "c_pen_ramp_iters":      int(cfg.c_pen_ramp_iters),
                 "c_quad_q":              float(cfg.c_quad_q),
                 "c_quad_p":              float(cfg.c_quad_p),
                 "c_quad_a":              float(cfg.c_quad_a),
@@ -607,15 +674,20 @@ def run(cfg: RunConfig) -> str:
                 "capex_subsidy":         float(cfg.capex_subsidy),
                 "terminal_capacity_value": float(cfg.terminal_capacity_value),
                 "decommission_penalty":  float(cfg.decommission_penalty),
+                # --- Player order ---
+                "player_order":          str(effective_order),
                 # --- Paths ---
                 "workdir":               workdir,
             },
         )
 
-        try:
-            write_default_plots(output_path=output_path, plots_dir=plots_dir)
-        except Exception as e:
-            print(f"[WARN] Plot generation failed: {e}")
+        if write_default_plots is None:
+            print("[WARN] Plot generation skipped: plotting dependencies not available.")
+        else:
+            try:
+                write_default_plots(output_path=output_path, plots_dir=plots_dir)
+            except Exception as e:
+                print(f"[WARN] Plot generation failed: {e}")
         print(f"[OK] wrote: {output_path}")
         return output_path
     finally:

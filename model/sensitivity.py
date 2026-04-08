@@ -448,12 +448,12 @@ def main() -> None:
             fix_q_offer_to_kcap=True,
             fix_a_bid_to_true_dem=True,
             # GS algorithm
-            iters=30,
-            omega=0.7,
+            iters=80,
+            omega=0.35,
             tol_strat=1e-2,
             tol_obj=1e-2,
             stable_iters=3,
-            convergence_mode="strategy",
+            convergence_mode="absolute",
             tol_p_abs=1.0,      # $1/kW max sweep-to-sweep change in p_offer
             tol_dk_abs=0.1,     # 0.1 GW/yr max sweep-to-sweep change in dK_net
             exclude_terminal_from_convergence=True,
@@ -464,13 +464,19 @@ def main() -> None:
             eps_x=1e-3,
             eps_comp=1e-3,
             # Proximal (algorithmic) penalties
-            c_pen_q=0.1,
-            c_pen_p=0.1,
-            c_pen_a=0.1,
-            # dK penalty annealing: start loose (players explore freely),
-            # ramp up over first 10 sweeps to stabilize around equilibrium.
-            c_pen_dk=0.02,          # start: loose — allow large investment steps
-            c_pen_dk_final=0.4,     # end:   tight — pin near fixed point
+            # High start to prevent early oscillations, ramp to strong final values.
+            c_pen_q=0.5,
+            c_pen_p=1.0,
+            c_pen_a=0.5,
+            c_pen_dk=0.5,
+            c_pen_q_mid=2.0,
+            c_pen_p_mid=5.0,
+            c_pen_a_mid=2.0,
+            c_pen_dk_mid=2.0,
+            c_pen_q_final=5.0,
+            c_pen_p_final=10.0,
+            c_pen_a_final=5.0,
+            c_pen_dk_final=5.0,
             c_pen_ramp_iters=10,    # ramp duration in sweeps
             # Economic quadratic penalties
             c_quad_q=0.1,
