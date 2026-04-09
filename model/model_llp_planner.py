@@ -91,8 +91,8 @@ def build_llp_planner_model(
     exp    = Set(m, "exp",    domain=R, records=regions)
     imp    = Set(m, "imp",    domain=R, records=regions)
     T      = Set(m, "T",      records=times)
-    T_plan = Set(m, "T_plan", records=plan_times)   # objective domain (no 2045)
-    T_move = Set(m, "T_move", records=move_times)   # investment domain
+    T_plan = Set(m, "T_plan", domain=[T], records=plan_times)   # objective domain (no 2045)
+    T_move = Set(m, "T_move", domain=[T], records=move_times)   # investment domain
 
     z = gp.Number(0)
 
@@ -362,7 +362,7 @@ def extract_llp_state(ctx: ModelContext, data: ModelData) -> Dict[str, object]:
         for _, row in rec.iterrows():
             t = row["T"]
             w = float(beta_dict.get(t, 1.0)) * float(ytn_dict.get(t, 5.0))
-            lam_dict[(row["imp"], t)] = float(row["marginal"]) / w if w else 0.0
+            lam_dict[(row["imp"], t)] = -float(row["marginal"]) / w if w else 0.0
 
     mu_cap_dict: Dict[Tuple[str, str], float] = {}
     rec = m["eq_cap"].records
@@ -507,34 +507,86 @@ if __name__ == "__main__":
 
     times_list = data.times or list(_DEFAULT_TIMES)
     plan_times = times_list[:-1]
+    c_man_t_dict   = data.c_man_t or {(r, t): float(data.c_man.get(r, 0.0)) for r in data.regions for t in times_list}
+    c_ship_dict    = data.c_ship or {}
+    kcap_init_dict = data.Kcap_2025 or data.Qcap or {}
+    ytn_d          = dict(data.years_to_next) if data.years_to_next else {t: 5.0 for t in times_list}
+    beta_d         = dict(data.beta_t) if data.beta_t else {t: 1.0 for t in times_list}
+    a_dem_t_dict   = dict(data.a_dem_t) if data.a_dem_t else {(r, t): float(data.a_dem.get(r, 0.0)) for r in data.regions for t in times_list}
+    b_dem_t_dict   = dict(data.b_dem_t) if data.b_dem_t else {(r, t): float(data.b_dem.get(r, 1.0)) for r in data.regions for t in times_list}
+    f_hold_dict    = dict(data.f_hold) if data.f_hold else {r: 0.0 for r in data.regions}
+    c_inv_dict     = dict(data.c_inv)  if data.c_inv  else {r: 0.0 for r in data.regions}
 
     try:
         with pd.ExcelWriter(out_path) as writer:
-            rows_x = [
-                {"exp": e, "imp": i, "t": t, "flow": state["x"].get((e, i, t), 0.0)}
-                for e in data.regions for i in data.regions for t in plan_times
-            ]
-            pd.DataFrame(rows_x)[lambda df: df["flow"] > 0.001].to_excel(
-                writer, sheet_name="Trade_Flows", index=False
-            )
-
+            # --- regions sheet (mirrors EPEC format) ---
             rows_rp = []
             for r in data.regions:
                 for t in plan_times:
+                    icap = state["Icap_pos"].get((r, t), 0.0)
+                    dcap = state["Dcap_neg"].get((r, t), 0.0)
+                    ytn  = ytn_d.get(t, 5.0)
+                    exports = sum(state["x"].get((r, i, t), 0.0) for i in data.regions)
+                    imports = sum(state["x"].get((e, r, t), 0.0) for e in data.regions)
+                    kcap    = state["Kcap"].get((r, t), 0.0)
+                    x_dem_val = state["x_dem"].get((r, t), 0.0)
+                    beta = beta_d.get(t, 1.0)
+                    a    = a_dem_t_dict.get((r, t), 0.0)
+                    b    = b_dem_t_dict.get((r, t), 0.0)
+                    cs   = a * x_dem_val - 0.5 * b * x_dem_val ** 2
+                    prod_cost  = sum((c_man_t_dict.get((r, t), 0.0) + float(c_ship_dict.get((r, i), 0.0)))
+                                     * state["x"].get((r, i, t), 0.0) for i in data.regions)
+                    hold_cost  = f_hold_dict.get(r, 0.0) * kcap
+                    inv_cost   = c_inv_dict.get(r, 0.0) * icap
+                    obj_r_t    = beta * ytn * (cs - prod_cost - hold_cost - inv_cost)
                     rows_rp.append({
-                        "region":   r,
-                        "t":        t,
-                        "x_dem":    state["x_dem"].get((r, t), 0.0),
-                        "x_man":    state["x_man"].get((r, t), 0.0),
-                        "Kcap":     state["Kcap"].get((r, t), 0.0),
-                        "Icap_pos": state["Icap_pos"].get((r, t), 0.0),
-                        "Dcap_neg": state["Dcap_neg"].get((r, t), 0.0),
-                        "lam":      state["lam"].get((r, t), 0.0),
-                        "mu_cap":   state["mu_cap"].get((r, t), 0.0),
-                        "c_man_t":  (data.c_man_t or {}).get((r, t), float(data.c_man.get(r, 0.0))),
-                        "Dmax":     float(data.Dmax_t[(r, t)]) if data.Dmax_t else float(data.Dmax.get(r, 0.0)),
+                        "r":              r,
+                        "t":              t,
+                        "Kcap":           kcap,
+                        "net_cap_change": ytn * (icap - dcap),
+                        "Icap_report":    icap,
+                        "Dcap_report":    dcap,
+                        "x_dem":          x_dem_val,
+                        "x_man":          state["x_man"].get((r, t), 0.0),
+                        "lam":            state["lam"].get((r, t), 0.0),
+                        "mu_cap":         state["mu_cap"].get((r, t), 0.0),
+                        "imports":        imports,
+                        "exports":        exports,
+                        "Kcap_init":      kcap_init_dict.get(r, 0.0),
+                        "c_man_t":        c_man_t_dict.get((r, t), 0.0),
+                        "cs":             cs,
+                        "prod_cost":      prod_cost,
+                        "hold_cost":      hold_cost,
+                        "inv_cost":       inv_cost,
+                        "obj":            obj_r_t,
                     })
-            pd.DataFrame(rows_rp).to_excel(writer, sheet_name="Regional_Summary", index=False)
+            pd.DataFrame(rows_rp).to_excel(writer, sheet_name="regions", index=False)
+
+            # --- flows sheet (mirrors EPEC format) ---
+            rows_x = []
+            for e in data.regions:
+                for i in data.regions:
+                    for t in plan_times:
+                        flow = state["x"].get((e, i, t), 0.0)
+                        if flow > 0.001:
+                            rows_x.append({
+                                "exp":    e,
+                                "imp":    i,
+                                "t":      t,
+                                "x":      flow,
+                                "c_ship": c_ship_dict.get((e, i), 0.0),
+                                "c_man":  c_man_t_dict.get((e, t), 0.0),
+                            })
+            pd.DataFrame(rows_x).to_excel(writer, sheet_name="flows", index=False)
+
+            # --- meta sheet ---
+            pd.DataFrame([
+                {"key": "model",           "value": "llp_planner"},
+                {"key": "obj_total",       "value": round(state["obj_total"], 2)},
+                {"key": "plan_times",      "value": str(plan_times)},
+                {"key": "excel_path",      "value": input_path},
+                {"key": "params_sheet",    "value": "params_region_new"},
+            ]).to_excel(writer, sheet_name="meta", index=False)
 
         print(f"\nResults saved to {out_path}")
     except PermissionError:
