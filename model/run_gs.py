@@ -37,7 +37,7 @@ _VALID_CONVERGENCE_MODES = {"strategy", "objective", "combined", "absolute"}
 # ── Player sweep order ────────────────────────────────────────────────────────
 # Edit this list to control the Gauss-Seidel sweep order.
 # Every strategic player must appear exactly once (case-insensitive).
-PLAYER_ORDER: List[str] = ["ch", "apac", "row", "eu", "us", "af"] 
+PLAYER_ORDER: List[str] = ["eu", "us", "af", "row", "apac", "ch"] 
 
 # ─────────────────────────────────────────────────────────────────────────────
 
