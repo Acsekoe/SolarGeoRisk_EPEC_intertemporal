@@ -1,0 +1,70 @@
+## Gauss-Seidel Player Order and Equilibrium Selection (2026-04-17)
+
+Across 8 runs with different player sweep orders, the model exhibits multiple Nash equilibria.
+The sweep order acts as an equilibrium selection device: in the CH-first runs (3 out of 8),
+r_strat stabilised below 1% for 7–9 consecutive iterations, constituting practical convergence.
+CH-last runs failed to formally converge within 30 iterations, though residuals remained low
+(1.3–3.7%). This is interpretable as the algorithm struggling to pin down a different basin of
+attraction, not as evidence that no equilibrium exists.
+
+## China-First Convergence Pattern (2026-04-17)
+
+All 3 robustly converged runs have China (CH, ~931 GW, dominant player) solving first in the
+Gauss-Seidel sweep. This suggests CH acts as a market anchor: when the largest player commits
+first, all others best-respond to a stable reference, enabling the algorithm to settle. This is
+an algorithmic property, distinct from the strategic last-mover advantage. For the paper: the
+CH-first equilibrium can be presented as the focal/algorithmically robust equilibrium given
+China's market dominance.
+
+## US–APAC Role Swap Across Equilibria (2026-04-17)
+
+The two most divergent equilibria (CH-first vs CH-last with the original order) show a complete
+role reversal between US and APAC: in one equilibrium US expands to 122 GW by 2040 while APAC
+shrinks to 51 GW; in the other, APAC expands to 300 GW while US exits the market entirely (0 GW).
+Welfare differences are large: US welfare +19%, APAC welfare -22% between the two equilibria.
+This multiplicity is economically meaningful and worth discussing as a coordination/equilibrium
+selection problem in the paper.
+
+## Price Uniqueness with Capacity Multiplicity (2026-04-17)
+
+Across the 3 converged CH-first runs, equilibrium market prices (lambda) are identical for CH,
+US, APAC, and ROW down to the decimal, despite substantial differences in capacity allocation
+(e.g. US Kcap 2040 ranges from ~0 to 119 GW across runs). This suggests the price equilibrium
+is effectively unique — pinned by the dominant players' cost structures and demand — while the
+capacity allocation equilibrium is non-unique. Multiple quantity strategies support the same
+price vector. For the paper: this is a useful robustness result — the policy-relevant outcomes
+(market prices, welfare) are stable across equilibria even though the structural outcome (who
+holds capacity) is not. Framing: "price equilibrium is unique; capacity distribution is
+indeterminate among mid-tier players."
+
+## Proximal Penalty Calibration — Evidence from Non-Convergence (2026-04-17)
+
+The fact that 5 out of 8 runs fail to converge even as proximal penalties ramp to their final
+values (c_pen_p=3, c_pen_dk=2) is actually evidence that the penalties are well-calibrated.
+If penalties were too high, all runs would converge trivially — players could barely move, so
+strategy changes would vanish mechanically rather than because a true fixed point was reached.
+The persistent non-convergence in CH-last runs indicates genuine strategic dynamics are still
+active at the penalty level used, meaning the 3 converged runs reflect a real equilibrium
+rather than a penalty-induced artefact. This should be noted in the computational appendix as
+a robustness argument for the penalty schedule.
+
+## Efficiency vs. Strategic Stability Across Equilibria (2026-04-17)
+
+Run 3 (ch,row,apac,us,eu,af) yields the highest total welfare (12,473 model units) and is also
+the equilibrium where US exits (~0.2 GW by 2040), on top of EU and AF already exiting. This is
+economically consistent: when higher-cost producers exit, demand is served entirely by lower-cost
+producers (CH, APAC, ROW), producing a more efficient allocation and higher aggregate surplus.
+This creates a clear tension for the paper between efficiency (total welfare maximised under
+market concentration in cheap-cost regions) and strategic stability / political sustainability
+(equilibria where more players retain capacity may be preferred even at lower aggregate welfare).
+The model thus endogenously generates a trade-off between allocative efficiency and market
+diversity that is relevant for policy discussions on solar supply chain concentration.
+
+## Persistent Residual in max_abs_dp (2026-04-17)
+
+All runs show a persistent max_abs_dp of ~2–5 $/kW that does not vanish, even when r_strat
+converges. This is driven by a systematic structural drift in ROW and US capacity decisions
+(ROW decommissioning, US adjusting), not by oscillation. The r_strat criterion is the more
+economically meaningful convergence measure here; the absolute price criterion is dominated
+by these slow-moving structural adjustments. This distinction should be noted in the
+computational appendix.
