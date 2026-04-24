@@ -10,7 +10,8 @@
       "Bash(python add_vspace.py \"IEEE Paper/use_this_file.tex\")",
       "Bash(pdflatex -interaction=nonstopmode use_this_file.tex)",
       "Bash(awk '/^\\\\{\\\\\\\\color\\\\{blue\\\\}/{print NR\": OPEN\"} /^\\\\}$/{print NR\": CLOSE\"}' \"c:/EEG/EPEC/EPEC_VS_code/SolarGeoRisk_EPEC_intertemporal/IEEE Paper/use_this_file.tex\")",
-      "Bash(awk '/^\\\\{\\\\\\\\color/{print NR\": \"$0}' \"c:/EEG/EPEC/EPEC_VS_code/SolarGeoRisk_EPEC_intertemporal/IEEE Paper/use_this_file.tex\")"
+      "Bash(awk '/^\\\\{\\\\\\\\color/{print NR\": \"$0}' \"c:/EEG/EPEC/EPEC_VS_code/SolarGeoRisk_EPEC_intertemporal/IEEE Paper/use_this_file.tex\")",
+      "PowerShell($bytes = [System.IO.File]::ReadAllBytes\\(\"IEEE Paper\\\\use_this_file.tex\"\\); $content = [System.Text.Encoding]::UTF8.GetString\\($bytes\\); $lines = $content -split \"`n\"; for \\($i = 1295; $i -lt 1310; $i++\\) { $line = $lines[$i]; $hasNonAscii = $false; foreach \\($c in $line.ToCharArray\\(\\)\\) { if \\([int]$c -gt 127\\) { $hasNonAscii = $true; break } }; if \\($hasNonAscii\\) { Write-Output \\(\"{0}: {1}\" -f \\($i+1\\), $line\\); foreach \\($c in $line.ToCharArray\\(\\)\\) { if \\([int]$c -gt 127\\) { Write-Output \\(\"   U+{0:X4}: {1}\" -f [int]$c, $c\\) } } } })"
     ]
   }
 }
