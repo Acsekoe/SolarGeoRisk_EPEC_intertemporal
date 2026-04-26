@@ -10,24 +10,37 @@ import pandas as pd
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-import matplotlib.cm as cm
-import numpy as np
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 SENS_DIR   = os.path.join(SCRIPT_DIR, "..", "outputs", "sens")
 OUT_DIR    = os.path.join(SCRIPT_DIR, "..", "outputs", "figures")
 os.makedirs(OUT_DIR, exist_ok=True)
 
+# Okabe-Ito colorblind-safe palette (standard in academic publications)
+OKABE_ITO = [
+    "#0072B2",  # blue
+    "#D55E00",  # vermillion
+    "#009E73",  # bluish green
+    "#CC79A7",  # reddish purple
+    "#E69F00",  # orange
+    "#56B4E9",  # sky blue
+    "#F0E442",  # yellow
+    "#000000",  # black
+]
+
 # ---------------------------------------------------------------------------
 # Load iters data from all sens files
 # ---------------------------------------------------------------------------
-sens_files = sorted(glob.glob(os.path.join(SENS_DIR, "sens_*.xlsx")))
+sens_files = sorted(glob.glob(os.path.join(SENS_DIR, "**", "sens_*.xlsx"), recursive=True))
 
 runs = {}
 for fpath in sens_files:
     name = os.path.splitext(os.path.basename(fpath))[0]
     # strip "sens_" prefix for cleaner labels
     label = name.replace("sens_", "")
+    # drop the run ending in ch_early
+    if label.endswith("ch_early"):
+        continue
     df = pd.read_excel(fpath, sheet_name="iters")
     runs[label] = df
 
@@ -36,7 +49,7 @@ for fpath in sens_files:
 # ---------------------------------------------------------------------------
 fig, ax = plt.subplots(figsize=(10, 5))
 
-colors = cm.tab10(np.linspace(0, 1, len(runs)))
+colors = [OKABE_ITO[i % len(OKABE_ITO)] for i in range(len(runs))]
 
 for (label, df), color in zip(runs.items(), colors):
     ls = "--" if label.endswith("_early") else "-"
@@ -44,8 +57,8 @@ for (label, df), color in zip(runs.items(), colors):
             linestyle=ls, linewidth=1.6, marker="o", markersize=3)
 
 ax.set_xlabel("Iteration", fontsize=11)
-ax.set_ylabel("r_strat  (relative strategy change)", fontsize=11)
-ax.set_title("Gauss-Seidel convergence — r_strat across player orderings", fontsize=12)
+ax.set_ylabel(r"$|\Delta\theta_k|$  (relative strategy change)", fontsize=11)
+ax.set_title(r"Gauss-Seidel convergence — $|\Delta\theta_k|$ across player orderings", fontsize=12)
 ax.legend(fontsize=7.5, loc="upper right", framealpha=0.9)
 ax.set_xlim(1, max(df["iter"].max() for df in runs.values()))
 ax.set_ylim(bottom=0)
