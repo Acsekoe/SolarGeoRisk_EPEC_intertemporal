@@ -1,0 +1,4 @@
+Gauss-Seidel ordering and convergence (from sensitivity sweep over 7 player orderings)
+- All 3 orderings that start with China (ch-...) converge; all 4 orderings that end with China (-ch) fail to converge.
+- Suggests CN's first-mover updates anchor the rest of the chain — putting CN last leaves the dominant upstream player chasing whatever the others just committed to, which is what we see as oscillation past iter ~10 in the non-converged runs.
+- Convergence figure now uses three penalty/damping regimes (low: iter 1-5, intermediate: 5-10, high: 10-30) to push residuals down monotonically; the regime change at iter 10 is what flattens out the converged runs.
