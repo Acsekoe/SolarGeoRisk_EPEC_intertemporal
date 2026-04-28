@@ -72,6 +72,15 @@ def compute_welfare_rows(df_reg, df_flows, model_label, run_label):
     """
     rows = []
     lam_lkp = {(row["r"], str(row["t"])): float(row["lam"]) for _, row in df_reg.iterrows()}
+    cost_col = "c_man_t" if "c_man_t" in df_reg.columns else "c_man_var"
+    c_man_lkp = (
+        {
+            (row["r"], str(row["t"])): float(row[cost_col])
+            for _, row in df_reg.iterrows()
+        }
+        if cost_col in df_reg.columns
+        else {}
+    )
 
     for _, reg in df_reg.iterrows():
         r, t = reg["r"], str(reg["t"])
@@ -95,7 +104,7 @@ def compute_welfare_rows(df_reg, df_flows, model_label, run_label):
             j      = fl["imp"]
             x_flow = float(fl["x"])
             c_ship = float(fl["c_ship"])
-            c_man  = float(fl["c_man"])
+            c_man  = c_man_lkp.get((r, t), float(fl["c_man"]))
             lam_j  = lam_lkp.get((j, t), 0.0)
             ps    += (lam_j - c_man - c_ship) * x_flow
 
@@ -148,7 +157,7 @@ print(f"  -> {len(plan_rows)} region-period rows")
 # ---------------------------------------------------------------------------
 all_rows = list(plan_rows)
 
-sens_files = sorted(glob.glob(os.path.join(SENS_DIR, "sens_*.xlsx")))
+sens_files = sorted(glob.glob(os.path.join(SENS_DIR, "**", "sens_*.xlsx"), recursive=True))
 print(f"\nFound {len(sens_files)} EPEC sens files")
 
 for fpath in sens_files:
@@ -209,6 +218,11 @@ for _, epec_row in df_summary[df_summary["model"] == "epec"].iterrows():
     })
 
 df_dw = pd.DataFrame(df_dw_rows)
+df_totals = (
+    df_summary.groupby(["model", "run"], as_index=False)["W_npv_total"]
+    .sum()
+    .rename(columns={"W_npv_total": "W_npv_total_all_regions"})
+)
 
 # ---------------------------------------------------------------------------
 # 4. Write Excel
@@ -218,6 +232,7 @@ with pd.ExcelWriter(OUT_PATH) as writer:
     df_all.to_excel(writer, sheet_name="welfare", index=False)
     df_summary.to_excel(writer, sheet_name="summary", index=False)
     df_dw.to_excel(writer, sheet_name="deadweight", index=False)
+    df_totals.to_excel(writer, sheet_name="totals", index=False)
 
 print("Done.")
 print("\n=== Planner total W_npv by region ===")

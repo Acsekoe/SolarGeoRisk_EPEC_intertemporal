@@ -1,188 +1,463 @@
 """
 plot_welfare.py
 ===============
-Three welfare comparison plots — Planner vs EPEC (ch->row->apac->us->eu->af):
+Paper figure for regional welfare under the global planner and the selected
+strategic EPEC run.
 
-  Plot 2: Stacked bar — welfare decomposition (net_CS, PS, CapCost) per region
-  Plot 3: Waterfall   — CS transfer, PS transfer, deadweight loss per region
-  Plot 4: Time series — W per region over periods
+The figure shows the cumulative present-value welfare change and the annual
+period-by-period welfare change. It intentionally has no plot titles so the
+caption can carry the narrative in the paper.
 """
 
 import os
-import pandas as pd
+import sys
+import contextlib
+import io
+import ast
+
 import numpy as np
+import pandas as pd
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
+from matplotlib.legend_handler import HandlerBase
+from matplotlib.patches import Rectangle
+from matplotlib.colors import TwoSlopeNorm
+from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 
-SCRIPT_DIR    = os.path.dirname(os.path.abspath(__file__))
-WELFARE_PATH  = os.path.join(SCRIPT_DIR, "..", "outputs", "sens", "welfare_comparison.xlsx")
-OUT_DIR       = os.path.join(SCRIPT_DIR, "..", "outputs", "figures")
+# Match IEEEtran serif rendering used by plot_convergence.py.
+plt.rcParams.update({
+    "font.family": "serif",
+    "font.serif": ["Times New Roman", "Times", "DejaVu Serif"],
+    "mathtext.fontset": "stix",
+    "axes.unicode_minus": False,
+})
+
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+ROOT_DIR = os.path.normpath(os.path.join(SCRIPT_DIR, ".."))
+INPUT_PATH = os.path.join(ROOT_DIR, "inputs", "input_data_intertemporal.xlsx")
+PLANNER_PATH = os.path.join(ROOT_DIR, "outputs", "llp_planner_results.xlsx")
+EPEC_PATH = os.path.join(
+    ROOT_DIR,
+    "outputs",
+    "sens",
+    "converged",
+    "sens_ch-row-apac-us-eu-af.xlsx",
+)
+OUT_DIR = os.path.join(SCRIPT_DIR, "..", "outputs", "figures")
 os.makedirs(OUT_DIR, exist_ok=True)
 
-SELECTED_RUN  = "sens_ch-row-apac-us-eu-af"
-PERIODS       = ["2025", "2030", "2035", "2040"]
-REGIONS       = ["ch", "eu", "us", "apac", "af", "row"]
-REGION_NAMES  = {"ch": "China", "eu": "Europe", "us": "United States",
-                 "apac": "Asia-Pacific", "af": "Africa", "row": "Rest of World"}
+SELECTED_RUN = "sens_ch-row-apac-us-eu-af"
+PERIODS = ["2025", "2030", "2035", "2040"]
+REGIONS = ["ch", "eu", "us", "apac", "af", "row"]
+REGION_NAMES = {
+    "ch": "China",
+    "eu": "Europe",
+    "us": "United States",
+    "apac": "Asia-Pacific",
+    "af": "Africa",
+    "row": "Rest of World",
+}
 
-COLOR_PLAN    = "#2196F3"
-COLOR_EPEC    = "#E53935"
-COLOR_CS      = "#4CAF50"
-COLOR_PS      = "#FF9800"
-COLOR_CAP     = "#9E9E9E"
-COLOR_DW      = "#7B1FA2"
-COLOR_POS     = "#43A047"
-COLOR_NEG     = "#E53935"
+COLOR_GAIN = "#2E7D32"
+COLOR_LOSS = "#C62828"
+COLOR_PLAN = "#BDBDBD"
+COLOR_GRID = "#D0D0D0"
+
+# The welfare workbook is in million USD: USD/kW times GW equals 1e6 USD.
+MUSD_TO_TUSD = 1e6
+MUSD_TO_BUSD = 1e3
+
+
+class SplitLegendKey:
+    def __init__(self, gain_color, loss_color):
+        self.gain_color = gain_color
+        self.loss_color = loss_color
+
+
+class SplitLegendHandler(HandlerBase):
+    def create_artists(
+        self, legend, orig_handle, xdescent, ydescent, width, height, fontsize, trans
+    ):
+        half_width = width / 2
+        gain_rect = Rectangle(
+            (xdescent, ydescent),
+            half_width,
+            height,
+            facecolor=orig_handle.gain_color,
+            edgecolor="white",
+            linewidth=0.8,
+            transform=trans,
+        )
+        loss_rect = Rectangle(
+            (xdescent + half_width, ydescent),
+            half_width,
+            height,
+            facecolor=orig_handle.loss_color,
+            edgecolor="white",
+            linewidth=0.8,
+            transform=trans,
+        )
+        border = Rectangle(
+            (xdescent, ydescent),
+            width,
+            height,
+            facecolor="none",
+            edgecolor="#BBBBBB",
+            linewidth=0.6,
+            transform=trans,
+        )
+        return [gain_rect, loss_rect, border]
+
+
+def fmt_signed(value, digits=2):
+    sign = "+" if value > 0 else ""
+    return f"{sign}{value:.{digits}f}"
+
+
+def load_model_data():
+    sys.path.insert(0, os.path.join(ROOT_DIR, "model"))
+    from data_prep import load_data_from_excel
+
+    # data_prep prints calibration summaries; keep plot generation quiet.
+    with contextlib.redirect_stdout(io.StringIO()):
+        return load_data_from_excel(INPUT_PATH, params_region_sheet="params_region_new")
+
+
+def add_demand_parameters(df_reg, data):
+    df_reg = df_reg.copy()
+    df_reg["t"] = df_reg["t"].astype(str)
+    a_dem = dict(data.a_dem_t) if data.a_dem_t else {
+        (r, t): float(data.a_dem.get(r, 0.0))
+        for r in data.regions
+        for t in data.times
+    }
+    b_dem = dict(data.b_dem_t) if data.b_dem_t else {
+        (r, t): float(data.b_dem.get(r, 1.0))
+        for r in data.regions
+        for t in data.times
+    }
+    if "a_dem_used" not in df_reg.columns:
+        df_reg["a_dem_used"] = df_reg.apply(
+            lambda row: a_dem.get((row["r"], row["t"]), 0.0), axis=1
+        )
+    if "b_dem_used" not in df_reg.columns:
+        df_reg["b_dem_used"] = df_reg.apply(
+            lambda row: b_dem.get((row["r"], row["t"]), 0.0), axis=1
+        )
+    return df_reg
+
+
+def compute_welfare(df_reg, df_flows, data, run_label):
+    df_reg = add_demand_parameters(df_reg, data)
+    df_flows = df_flows.copy()
+    df_flows["t"] = df_flows["t"].astype(str)
+
+    beta_t = dict(data.beta_t) if data.beta_t else {t: 1.0 for t in PERIODS}
+    ytn_t = dict(data.years_to_next) if data.years_to_next else {t: 5.0 for t in PERIODS}
+    f_hold = dict(data.f_hold) if data.f_hold else {r: 0.0 for r in REGIONS}
+    c_inv = dict(data.c_inv) if data.c_inv else {r: 0.0 for r in REGIONS}
+    lam = {(row["r"], row["t"]): float(row["lam"]) for _, row in df_reg.iterrows()}
+    cost_col = "c_man_t" if "c_man_t" in df_reg.columns else "c_man_var"
+    c_man = {
+        (row["r"], row["t"]): float(row[cost_col])
+        for _, row in df_reg.iterrows()
+    } if cost_col in df_reg.columns else None
+
+    rows = []
+    for _, reg in df_reg[df_reg["t"].isin(PERIODS)].iterrows():
+        r = reg["r"]
+        t = reg["t"]
+        x_dem = float(reg["x_dem"])
+        gross_cs = float(reg["a_dem_used"]) * x_dem - 0.5 * float(reg["b_dem_used"]) * x_dem**2
+        net_cs = gross_cs - float(reg["lam"]) * x_dem
+
+        flows_r = df_flows[(df_flows["exp"] == r) & (df_flows["t"] == t)]
+        ps = 0.0
+        for _, flow in flows_r.iterrows():
+            imp = flow["imp"]
+            cost = c_man[(r, t)] if c_man is not None else float(flow["c_man"])
+            ps += (
+                lam.get((imp, t), 0.0)
+                - cost
+                - float(flow["c_ship"])
+            ) * float(flow["x"])
+
+        cap_cost = f_hold.get(r, 0.0) * float(reg["Kcap"]) + c_inv.get(r, 0.0) * float(reg["Icap_report"])
+        welfare = net_cs + ps - cap_cost
+        rows.append(
+            {
+                "run": run_label,
+                "r": r,
+                "t": t,
+                "gross_CS": gross_cs,
+                "net_CS": net_cs,
+                "PS": ps,
+                "CapCost": cap_cost,
+                "W": welfare,
+                "W_npv": beta_t.get(t, 1.0) * ytn_t.get(t, 5.0) * welfare,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def read_meta_dict(path):
+    meta = pd.read_excel(path, sheet_name="meta")
+    return dict(zip(meta["key"], meta["value"]))
+
+
+def parse_mapping(value, fallback):
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return fallback
+    if isinstance(value, dict):
+        return value
+    try:
+        return ast.literal_eval(str(value))
+    except (ValueError, SyntaxError):
+        return fallback
+
 
 # ---------------------------------------------------------------------------
 # Load data
 # ---------------------------------------------------------------------------
-df_welfare  = pd.read_excel(WELFARE_PATH, sheet_name="welfare")
-df_summary  = pd.read_excel(WELFARE_PATH, sheet_name="summary")
-df_dw       = pd.read_excel(WELFARE_PATH, sheet_name="deadweight")
+data = load_model_data()
+epec_meta = read_meta_dict(EPEC_PATH)
+data.beta_t = parse_mapping(epec_meta.get("beta_t"), data.beta_t or {t: 1.0 for t in PERIODS})
+data.years_to_next = parse_mapping(
+    epec_meta.get("ytn"), data.years_to_next or {t: 5.0 for t in PERIODS}
+)
+df_plan_reg = pd.read_excel(PLANNER_PATH, sheet_name="regions")
+df_plan_flows = pd.read_excel(PLANNER_PATH, sheet_name="flows")
+df_epec_reg = pd.read_excel(EPEC_PATH, sheet_name="regions")
+df_epec_flows = pd.read_excel(EPEC_PATH, sheet_name="flows")
 
-df_welfare["t"] = df_welfare["t"].astype(str)
-# normalise column name
-W_COL = [c for c in df_welfare.columns if c.startswith("W ")][0]
-df_welfare = df_welfare.rename(columns={W_COL: "W"})
+df_plan = compute_welfare(df_plan_reg, df_plan_flows, data, "planner")
+df_epec = compute_welfare(df_epec_reg, df_epec_flows, data, SELECTED_RUN)
 
-# filter to selected run + planner
-df_sum_plan = df_summary[df_summary["run"] == "planner"].set_index("r")
-df_sum_epec = df_summary[df_summary["run"] == SELECTED_RUN].set_index("r")
-df_dw_sel   = df_dw[df_dw["run"] == SELECTED_RUN].set_index("r")
+summary_plan = df_plan.groupby("r")["W_npv"].sum().loc[REGIONS]
+summary_epec = df_epec.groupby("r")["W_npv"].sum().loc[REGIONS]
 
-df_w_plan   = df_welfare[df_welfare["run"] == "planner"]
-df_w_epec   = df_welfare[df_welfare["run"] == SELECTED_RUN]
+df_total = pd.DataFrame(
+    {
+        "region": [REGION_NAMES[r] for r in REGIONS],
+        "planner": summary_plan / MUSD_TO_TUSD,
+        "epec": summary_epec / MUSD_TO_TUSD,
+        "delta": (summary_epec - summary_plan) / MUSD_TO_TUSD,
+        "delta_pct": 100 * (summary_epec - summary_plan) / summary_plan,
+    },
+    index=REGIONS,
+)
 
-# scale to billions for readability
-SCALE       = 1e6       # values are in M$, divide by 1e6 → trillions; or keep M$
-UNIT_LABEL  = "M USD"
+# Keep China first for the narrative, then order losses by absolute PV effect.
+loss_order = (
+    df_total.drop(index="ch")
+    .assign(abs_delta=lambda d: d["delta"].abs())
+    .sort_values("abs_delta", ascending=False)
+    .index.tolist()
+)
+plot_order = ["ch"] + loss_order
+df_total = df_total.loc[plot_order]
 
-# ===========================================================================
-# PLOT 2 — Stacked bar: welfare decomposition per region
-# ===========================================================================
-fig2, axes2 = plt.subplots(2, 3, figsize=(14, 8), sharey=False)
-axes2 = axes2.flatten()
+df_plan_idx = df_plan.set_index(["r", "t"])
+df_epec_idx = df_epec.set_index(["r", "t"])
 
-for ax, r in zip(axes2, REGIONS):
-    x      = np.array([0, 1])
-    labels = ["Planner", "EPEC"]
+delta_annual = pd.DataFrame(index=plot_order, columns=PERIODS, dtype=float)
+for r in plot_order:
+    for t in PERIODS:
+        delta_annual.loc[r, t] = (
+            df_epec_idx.loc[(r, t), "W"] - df_plan_idx.loc[(r, t), "W"]
+        ) / MUSD_TO_BUSD
 
-    for idx, df_s in enumerate([df_sum_plan, df_sum_epec]):
-        net_cs   =  df_s.loc[r, "net_CS"]
-        ps       =  df_s.loc[r, "PS"]
-        cap_cost = -df_s.loc[r, "CapCost"]   # negative (cost)
+y = np.arange(len(df_total))
 
-        # stack positive components first, then negative
-        pos_vals = [v for v in [net_cs, ps] if v >= 0]
-        neg_vals = [v for v in [net_cs, ps, cap_cost] if v < 0]
 
-        bottom_pos, bottom_neg = 0.0, 0.0
-        for val, color, label in [(net_cs, COLOR_CS, "Net CS"),
-                                   (ps,     COLOR_PS, "PS"),
-                                   (cap_cost, COLOR_CAP, "−CapCost")]:
-            ax.bar(x[idx], val, bottom=bottom_pos if val >= 0 else bottom_neg,
-                   color=color, width=0.5,
-                   label=label if idx == 0 else "_nolegend_")
-            if val >= 0:
-                bottom_pos += val
-            else:
-                bottom_neg += val
+# ---------------------------------------------------------------------------
+# Figure
+# ---------------------------------------------------------------------------
+fig, (ax_total, ax_time) = plt.subplots(
+    1,
+    2,
+    figsize=(11.8, 5.4),
+    gridspec_kw={"width_ratios": [0.92, 1.08], "wspace": 0.16},
+)
 
-    ax.set_title(REGION_NAMES[r], fontsize=11, fontweight="bold")
-    ax.set_xticks([0, 1])
-    ax.set_xticklabels(labels, fontsize=9)
-    ax.set_ylabel(f"W_npv  ({UNIT_LABEL})", fontsize=8)
-    ax.axhline(0, color="black", linewidth=0.7)
-    ax.grid(True, axis="y", linestyle=":", alpha=0.5)
-    ax.tick_params(labelsize=8)
+# Cumulative present-value welfare change against the planner benchmark.
+bar_colors = [COLOR_GAIN if v > 0 else COLOR_LOSS for v in df_total["delta"]]
+ax_total.barh(y, df_total["delta"], color=bar_colors, height=0.58, alpha=0.94)
+ax_total.axvline(0, color="#222222", linewidth=1.0)
 
-handles = [mpatches.Patch(color=COLOR_CS,  label="Net Consumer Surplus"),
-           mpatches.Patch(color=COLOR_PS,  label="Producer Surplus"),
-           mpatches.Patch(color=COLOR_CAP, label="−Capacity Cost")]
-fig2.legend(handles=handles, loc="lower center", ncol=3, fontsize=10,
-            framealpha=0.9, bbox_to_anchor=(0.5, -0.02))
-fig2.suptitle("Welfare decomposition by region — Planner vs EPEC",
-              fontsize=13, fontweight="bold", y=1.01)
-plt.tight_layout()
-fig2.savefig(os.path.join(OUT_DIR, "welfare_decomposition.png"), dpi=150, bbox_inches="tight")
-print("Saved welfare_decomposition.png")
+for yi, (_, row) in enumerate(df_total.iterrows()):
+    if 0 <= row["delta"] < 0.05:
+        x_text = -0.025
+        ha = "right"
+        label_text = f"{fmt_signed(row['delta'])} ({row['delta_pct']:+.1f}%)"
+    elif row["delta"] >= 0:
+        x_text = row["delta"] + 0.08
+        ha = "left"
+        label_text = f"{fmt_signed(row['delta'])} ({row['delta_pct']:+.1f}%)"
+    else:
+        x_text = row["delta"] - 0.025
+        ha = "right"
+        label_text = f"{fmt_signed(row['delta'])} ({row['delta_pct']:+.1f}%)"
+    ax_total.text(
+        x_text,
+        yi,
+        label_text,
+        va="center",
+        ha=ha,
+        fontsize=11.5,
+        color=COLOR_GAIN if row["delta"] > 0 else COLOR_LOSS,
+        fontweight="bold" if row["delta"] > 0 else "normal",
+    )
+ax_total.set_yticks(y)
+ax_total.set_yticklabels(df_total["region"], fontsize=10.5)
+ax_total.invert_yaxis()
+ax_total.set_xlabel("Cumulative welfare difference (EPEC - planner) [trillion USD]", fontsize=10.5)
+ax_total.grid(True, axis="x", linestyle=":", color=COLOR_GRID)
+ax_total.set_axisbelow(True)
+ax_total.spines[["top", "right", "left"]].set_visible(False)
+ax_total.tick_params(axis="y", length=0)
+limit = max(abs(df_total["delta"].min()), abs(df_total["delta"].max())) * 2.05
+ax_total.set_xlim(-limit, limit)
 
-# ===========================================================================
-# PLOT 3 — Waterfall: CS transfer, PS transfer, deadweight loss per region
-# ===========================================================================
-fig3, ax3 = plt.subplots(figsize=(11, 6))
+# Period-by-period annual welfare change.
+heat_values = delta_annual.to_numpy(dtype=float)
+heat_limit = np.nanmax(np.abs(heat_values))
+norm = TwoSlopeNorm(vmin=-heat_limit, vcenter=0.0, vmax=heat_limit)
+im = ax_time.imshow(heat_values, cmap="RdBu", norm=norm, aspect="auto")
 
-r_labels   = [REGION_NAMES[r] for r in REGIONS]
-n          = len(REGIONS)
-x          = np.arange(n)
-width      = 0.25
+ax_time.set_xticks(np.arange(len(PERIODS)))
+ax_time.set_xticklabels(PERIODS, fontsize=10)
+ax_time.set_yticks(y)
+ax_time.set_yticklabels([])
+ax_time.tick_params(axis="y", length=0)
+ax_time.spines[["top", "right", "left", "bottom"]].set_visible(False)
 
-cs_vals  = [df_dw_sel.loc[r, "CS_transfer"]   for r in REGIONS]
-ps_vals  = [df_dw_sel.loc[r, "PS_transfer"]   for r in REGIONS]
-dw_vals  = [df_dw_sel.loc[r, "deadweight_loss"] for r in REGIONS]
+for i in range(heat_values.shape[0]):
+    for j in range(heat_values.shape[1]):
+        value = heat_values[i, j]
+        text_color = "white" if abs(value) > 55 else "#222222"
+        ax_time.text(
+            j,
+            i,
+            fmt_signed(value, digits=1),
+            ha="center",
+            va="center",
+            fontsize=11.5,
+            color=text_color,
+            fontweight="bold" if value > 0 else "normal",
+        )
 
-bars_cs = ax3.bar(x - width, cs_vals, width, label="CS transfer (consumers)",
-                  color=[COLOR_NEG if v < 0 else COLOR_POS for v in cs_vals], alpha=0.85)
-bars_ps = ax3.bar(x,         ps_vals, width, label="PS transfer (producers)",
-                  color=[COLOR_POS if v > 0 else COLOR_NEG for v in ps_vals], alpha=0.85)
-bars_dw = ax3.bar(x + width, dw_vals, width, label="Deadweight loss (total W)",
-                  color=COLOR_DW, alpha=0.85)
+cax = inset_axes(
+    ax_time,
+    width="100%",
+    height="7%",
+    loc="lower center",
+    bbox_to_anchor=(0, -0.20, 1, 1),
+    bbox_transform=ax_time.transAxes,
+    borderpad=0,
+)
+cbar = fig.colorbar(im, cax=cax, orientation="horizontal")
+cbar.set_label("Annual welfare difference (EPEC - planner) [billion USD/year]", fontsize=10)
+cbar.ax.tick_params(labelsize=9)
 
-ax3.axhline(0, color="black", linewidth=0.8)
-ax3.set_xticks(x)
-ax3.set_xticklabels(r_labels, fontsize=10)
-ax3.set_ylabel(f"EPEC − Planner  ({UNIT_LABEL})", fontsize=10)
-ax3.set_title("Welfare redistribution and deadweight loss — EPEC vs Planner",
-              fontsize=12, fontweight="bold")
-ax3.grid(True, axis="y", linestyle=":", alpha=0.5)
+fig.subplots_adjust(left=0.12, right=0.96, top=0.96, bottom=0.22, wspace=0.16)
 
-handles = [mpatches.Patch(color=COLOR_NEG, label="CS transfer (consumers lose)"),
-           mpatches.Patch(color=COLOR_POS, label="PS transfer (producers gain)"),
-           mpatches.Patch(color=COLOR_DW,  label="Net deadweight loss")]
-ax3.legend(handles=handles, fontsize=9, loc="lower right")
-plt.tight_layout()
-fig3.savefig(os.path.join(OUT_DIR, "welfare_waterfall.png"), dpi=150, bbox_inches="tight")
-print("Saved welfare_waterfall.png")
+out_png = os.path.join(OUT_DIR, "welfare_epec_vs_planner.png")
+out_pdf = os.path.join(OUT_DIR, "welfare_epec_vs_planner.pdf")
+fig.savefig(out_png, dpi=180, bbox_inches="tight")
+fig.savefig(out_pdf, bbox_inches="tight")
+print(f"Saved to {out_png}")
+print(f"Saved to {out_pdf}")
 
-# ===========================================================================
-# PLOT 4 — Time series: W per region over periods
-# ===========================================================================
-fig4, axes4 = plt.subplots(2, 3, figsize=(14, 8), sharey=False)
-axes4 = axes4.flatten()
 
-for ax, r in zip(axes4, REGIONS):
-    plan_r = df_w_plan[df_w_plan["r"] == r].set_index("t").reindex(PERIODS)
-    epec_r = df_w_epec[df_w_epec["r"] == r].set_index("t").reindex(PERIODS)
+# ---------------------------------------------------------------------------
+# Alternative figure: period-stacked annual welfare differences
+# ---------------------------------------------------------------------------
+fig_stack, ax_stack = plt.subplots(figsize=(7.4, 4.8))
 
-    periods_int = [int(p) for p in PERIODS]
+gain_colors = {
+    "2025": "#DCEFD9",
+    "2030": "#A8D5A2",
+    "2035": "#5EA267",
+    "2040": "#2E6F40",
+}
+loss_colors = {
+    "2025": "#FADBD8",
+    "2030": "#F1948A",
+    "2035": "#D95F5F",
+    "2040": "#A83232",
+}
+positive_base = np.zeros(len(plot_order))
+negative_base = np.zeros(len(plot_order))
 
-    ax.plot(periods_int, plan_r["W"], color=COLOR_PLAN, linewidth=2,
-            marker="o", markersize=5, label="Planner")
-    ax.plot(periods_int, epec_r["W"], color=COLOR_EPEC, linewidth=2,
-            marker="s", markersize=5, label="EPEC")
+for j, period in enumerate(PERIODS):
+    values = delta_annual[period].to_numpy(dtype=float)
+    positive_values = np.where(values > 0, values, 0.0)
+    negative_values = np.where(values < 0, values, 0.0)
 
-    ax.fill_between(periods_int, plan_r["W"], epec_r["W"],
-                    where=[True]*len(PERIODS),
-                    alpha=0.12, color=COLOR_DW, label="Difference")
+    ax_stack.barh(
+        y,
+        positive_values,
+        left=positive_base,
+        height=0.62,
+        color=gain_colors[period],
+        edgecolor="white",
+        linewidth=1.2,
+    )
+    ax_stack.barh(
+        y,
+        np.abs(negative_values),
+        left=negative_base + negative_values,
+        height=0.62,
+        color=loss_colors[period],
+        edgecolor="white",
+        linewidth=1.2,
+    )
 
-    ax.set_title(REGION_NAMES[r], fontsize=11, fontweight="bold")
-    ax.set_xticks(periods_int)
-    ax.set_xlabel("Period", fontsize=9)
-    ax.set_ylabel(f"W  ({UNIT_LABEL}/yr)", fontsize=9)
-    ax.axhline(0, color="black", linewidth=0.6, linestyle="--")
-    ax.grid(True, linestyle=":", alpha=0.5)
-    ax.tick_params(labelsize=8)
+    positive_base += positive_values
+    negative_base += negative_values
 
-handles = [mpatches.Patch(color=COLOR_PLAN, label="Planner"),
-           mpatches.Patch(color=COLOR_EPEC, label="EPEC"),
-           mpatches.Patch(color=COLOR_DW,   alpha=0.3, label="Difference")]
-fig4.legend(handles=handles, loc="lower center", ncol=3, fontsize=10,
-            framealpha=0.9, bbox_to_anchor=(0.5, -0.02))
-fig4.suptitle("Regional welfare over time — Planner vs EPEC",
-              fontsize=13, fontweight="bold", y=1.01)
-plt.tight_layout()
-fig4.savefig(os.path.join(OUT_DIR, "welfare_timeseries.png"), dpi=150, bbox_inches="tight")
-print("Saved welfare_timeseries.png")
+ax_stack.axvline(0, color="#1A1A1A", linewidth=1.35, zorder=3)
+ax_stack.set_yticks(y)
+ax_stack.set_yticklabels(df_total["region"], fontsize=15)
+ax_stack.invert_yaxis()
+ax_stack.set_xlabel("")
+ax_stack.grid(True, axis="x", linestyle=":", color=COLOR_GRID)
+ax_stack.set_axisbelow(True)
+ax_stack.spines[["top", "right", "left"]].set_visible(False)
+ax_stack.tick_params(axis="x", labelsize=15)
+ax_stack.tick_params(axis="y", length=0, labelsize=15)
+legend_handles = [
+    SplitLegendKey(gain_colors[period], loss_colors[period])
+    for period in PERIODS
+]
+ax_stack.legend(
+    handles=legend_handles,
+    labels=PERIODS,
+    handler_map={SplitLegendKey: SplitLegendHandler()},
+    ncol=4,
+    loc="lower center",
+    bbox_to_anchor=(0.5, -0.26),
+    frameon=True,
+    fontsize=13,
+    framealpha=0.9,
+    handlelength=2.0,
+    handletextpad=0.5,
+    columnspacing=1.0,
+    borderpad=0.45,
+    labelspacing=0.35,
+)
+
+stack_limit = max(abs(negative_base.min()), abs(positive_base.max())) * 1.12
+ax_stack.set_xlim(-stack_limit, stack_limit)
+fig_stack.subplots_adjust(left=0.23, right=0.96, top=0.96, bottom=0.27)
+
+out_stack_png = os.path.join(OUT_DIR, "welfare_epec_vs_planner_stacked_annual.png")
+out_stack_pdf = os.path.join(OUT_DIR, "welfare_epec_vs_planner_stacked_annual.pdf")
+fig_stack.savefig(out_stack_png, dpi=180, bbox_inches="tight")
+fig_stack.savefig(out_stack_pdf, bbox_inches="tight")
+print(f"Saved to {out_stack_png}")
+print(f"Saved to {out_stack_pdf}")

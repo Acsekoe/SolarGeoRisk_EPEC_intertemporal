@@ -11,9 +11,17 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
+# Match IEEEtran serif rendering used by the other paper figures.
+plt.rcParams.update({
+    "font.family": "serif",
+    "font.serif": ["Times New Roman", "Times", "DejaVu Serif"],
+    "mathtext.fontset": "stix",
+    "axes.unicode_minus": False,
+})
+
 SCRIPT_DIR   = os.path.dirname(os.path.abspath(__file__))
 PLANNER_PATH = os.path.join(SCRIPT_DIR, "..", "outputs", "llp_planner_results.xlsx")
-EPEC_PATH    = os.path.join(SCRIPT_DIR, "..", "outputs", "sens", "sens_ch-row-apac-us-eu-af.xlsx")
+EPEC_PATH    = os.path.join(SCRIPT_DIR, "..", "outputs", "sens", "converged", "sens_ch-row-apac-us-eu-af.xlsx")
 OUT_DIR      = os.path.join(SCRIPT_DIR, "..", "outputs", "figures")
 os.makedirs(OUT_DIR, exist_ok=True)
 
@@ -34,42 +42,43 @@ df_epec["t"] = df_epec["t"].astype(str)
 # ---------------------------------------------------------------------------
 # Plot — 2x3 grid, one panel per region
 # ---------------------------------------------------------------------------
-fig, axes = plt.subplots(2, 3, figsize=(12, 7), sharey=False)
+fig, axes = plt.subplots(3, 2, figsize=(7.0, 8.4), sharey=False)
 axes = axes.flatten()
 
-COLOR_PLAN  = "#2196F3"   # blue
-COLOR_EPEC  = "#E53935"   # red
-COLOR_COST  = "#757575"   # grey for marginal cost
+COLOR_PLAN  = "#2E6F40"   # green
+COLOR_EPEC  = "#A83232"   # red
 
-for ax, r in zip(axes, REGIONS):
+for i, (ax, r) in enumerate(zip(axes, REGIONS)):
     plan_r = df_plan[df_plan["r"] == r].set_index("t").reindex(PERIODS)
     epec_r = df_epec[df_epec["r"] == r].set_index("t").reindex(PERIODS)
 
     periods_int = [int(p) for p in PERIODS]
 
-    ax.plot(periods_int, plan_r["lam"],     color=COLOR_PLAN, linewidth=2,
-            marker="o", markersize=5, label="Planner")
-    ax.plot(periods_int, epec_r["lam"],     color=COLOR_EPEC, linewidth=2,
-            marker="s", markersize=5, label="EPEC")
-    ax.plot(periods_int, epec_r["c_man_var"], color=COLOR_COST, linewidth=1.4,
-            linestyle="--", marker="^", markersize=4, label="Marginal cost")
-
-    ax.set_title(REGION_NAMES[r], fontsize=11, fontweight="bold")
+    ax.plot(periods_int, plan_r["lam"],     color=COLOR_PLAN, linewidth=2.2,
+            marker="o", markersize=5.5, label="Planner")
+    ax.plot(periods_int, epec_r["lam"],     color=COLOR_EPEC, linewidth=2.2,
+            marker="s", markersize=5.5, label="EPEC")
+    ax.set_title(REGION_NAMES[r], fontsize=18, fontweight="normal")
     ax.set_xticks(periods_int)
-    ax.set_xlabel("Period", fontsize=9)
-    ax.set_ylabel("Price ($/kW)", fontsize=9)
+    ax.set_xlabel("")
+    if i % 2 == 0:
+        ax.set_ylabel("Price ($/kW)", fontsize=20)
+    else:
+        ax.set_ylabel("")
     ax.grid(True, linestyle=":", alpha=0.5)
-    ax.tick_params(labelsize=8)
+    ax.tick_params(axis="both", labelsize=15)
 
 # shared legend below the plots
 handles, labels = axes[0].get_legend_handles_labels()
-fig.legend(handles, labels, loc="lower center", ncol=3, fontsize=10,
-           framealpha=0.9, bbox_to_anchor=(0.5, -0.02))
+fig.legend(handles, labels, loc="lower center", ncol=3, fontsize=13,
+           framealpha=0.9, handletextpad=0.5, columnspacing=1.0,
+           borderpad=0.45, labelspacing=0.35, bbox_to_anchor=(0.5, 0.015))
 
-fig.suptitle("Market prices by region — Planner vs EPEC (ch→row→apac→us→eu→af)",
-             fontsize=12, fontweight="bold", y=1.01)
-
-plt.tight_layout()
+fig.subplots_adjust(left=0.13, right=0.98, top=0.95, bottom=0.12,
+                    wspace=0.34, hspace=0.50)
 out_path = os.path.join(OUT_DIR, "prices_planner_vs_epec.png")
-plt.savefig(out_path, dpi=150, bbox_inches="tight")
+out_pdf = os.path.join(OUT_DIR, "prices_planner_vs_epec.pdf")
+plt.savefig(out_path, dpi=300, bbox_inches="tight")
+plt.savefig(out_pdf, bbox_inches="tight")
 print(f"Saved to {out_path}")
+print(f"Saved to {out_pdf}")
