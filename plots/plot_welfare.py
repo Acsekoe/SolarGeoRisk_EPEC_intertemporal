@@ -424,7 +424,10 @@ ax_stack.axvline(0, color="#1A1A1A", linewidth=1.35, zorder=3)
 ax_stack.set_yticks(y)
 ax_stack.set_yticklabels(df_total["region"], fontsize=15)
 ax_stack.invert_yaxis()
-ax_stack.set_xlabel("")
+ax_stack.set_xlabel(
+    "[billion USD/year]",
+    fontsize=15,
+)
 ax_stack.grid(True, axis="x", linestyle=":", color=COLOR_GRID)
 ax_stack.set_axisbelow(True)
 ax_stack.spines[["top", "right", "left"]].set_visible(False)
@@ -440,7 +443,7 @@ ax_stack.legend(
     handler_map={SplitLegendKey: SplitLegendHandler()},
     ncol=4,
     loc="lower center",
-    bbox_to_anchor=(0.5, -0.26),
+    bbox_to_anchor=(0.5, -0.34),
     frameon=True,
     fontsize=13,
     framealpha=0.9,
@@ -453,7 +456,7 @@ ax_stack.legend(
 
 stack_limit = max(abs(negative_base.min()), abs(positive_base.max())) * 1.12
 ax_stack.set_xlim(-stack_limit, stack_limit)
-fig_stack.subplots_adjust(left=0.23, right=0.96, top=0.96, bottom=0.27)
+fig_stack.subplots_adjust(left=0.23, right=0.96, top=0.96, bottom=0.36)
 
 out_stack_png = os.path.join(OUT_DIR, "welfare_epec_vs_planner_stacked_annual.png")
 out_stack_pdf = os.path.join(OUT_DIR, "welfare_epec_vs_planner_stacked_annual.pdf")
