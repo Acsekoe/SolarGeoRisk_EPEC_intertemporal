@@ -51,15 +51,16 @@ REGION_NAMES = {
     "row": "ROW",
 }
 
-# Colorblind-friendly qualitative palette. The same mapping is used for
-# planner and EPEC bars so regional composition can be compared directly.
+# Regional palette aligned with the Section C capacity/trade-flow figures.
+# The same mapping is used for planner and EPEC bars so regional composition
+# can be compared directly.
 REGION_COLORS = {
-    "ch": "#2F3A67",
-    "eu": "#3A9BC1",
-    "us": "#C75D4A",
-    "apac": "#5FAE8B",
-    "af": "#D9A441",
-    "row": "#9B6FB5",
+    "ch": "#CA6180",
+    "eu": "#FEFD99",
+    "us": "#FCB7C7",
+    "apac": "#B7A6D8",
+    "af": "#B8D99E",
+    "row": "#9ED3DC",
 }
 
 COLOR_GRID = "#D0D0D0"

@@ -39,12 +39,12 @@ DEST_ORDER = ["unused", *REGION_ORDER]
 CHORD_COLORS: Dict[str, str] = {
     # Exact regional colors from plots/plot_capacity_epec_demand.py,
     # used for Fig. capacity_epec_stacked_with_global_demand in the paper.
-    "ch": "#744577",
-    "eu": "#F0E9B6",
-    "us": "#C2846A",
-    "apac": "#ACCFA3",
-    "af": "#7B9EB5",
-    "row": "#84C5B1",
+    "ch": "#CA6180",
+    "eu": "#FEFD99",
+    "us": "#FCB7C7",
+    "apac": "#B7A6D8",
+    "af": "#B8D99E",
+    "row": "#9ED3DC",
     "unused": "#F2F2F2",
 }
 
