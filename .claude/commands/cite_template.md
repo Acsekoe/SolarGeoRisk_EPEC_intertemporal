@@ -11,6 +11,16 @@ This command uses two APIs. Replace the placeholders below with your own keys be
 
 You can either substitute the placeholders inline, or export the keys as environment variables and reference them in the curl commands (e.g., `-H "x-api-key: $SEMANTIC_SCHOLAR_API_KEY"`).
 
+## Rate Limiting — Semantic Scholar
+
+The API key grants **1 request per second**. Exceeding this returns a 429 (Too Many Requests).
+
+**Rules to follow on every Semantic Scholar call:**
+- Wait at least 2 seconds between consecutive Semantic Scholar requests (`sleep 2` before each call after the first).
+- Never fire two Semantic Scholar calls in parallel.
+- On a 429 response, wait 10 seconds and retry once before falling back to Scopus.
+- Scopus has no strict rate limit at this usage level — prefer it for bulk abstract retrieval.
+
 ## Search Protocol
 
 ### Step 1: Search via Semantic Scholar (Primary)
@@ -30,7 +40,8 @@ curl -s -H "x-api-key: <SEMANTIC_SCHOLAR_API_KEY>" \
 **Full Example — Search for LLM energy management papers:**
 
 ```bash
-curl -s -H "x-api-key: <SEMANTIC_SCHOLAR_API_KEY>" \
+# Always add sleep 2 before each Semantic Scholar call after the first
+sleep 2 && curl -s -H "x-api-key: <SEMANTIC_SCHOLAR_API_KEY>" \
   "https://api.semanticscholar.org/graph/v1/paper/search?query=large+language+model+energy+management&fields=title,authors,year,abstract,citationCount,journal,externalIds,isOpenAccess,openAccessPdf&limit=10"
 ```
 
@@ -74,7 +85,7 @@ curl -s "https://api.elsevier.com/content/abstract/doi/{DOI}?view=META_ABS" \
 When you find a highly relevant paper, use the citations endpoint to discover recent follow-up work:
 
 ```bash
-curl -s -H "x-api-key: <SEMANTIC_SCHOLAR_API_KEY>" \
+sleep 2 && curl -s -H "x-api-key: <s2k-nXxM4Ftzq6YjOqFbtnEnasE4EYnId1k3i5aWVXk3>" \
   "https://api.semanticscholar.org/graph/v1/paper/DOI:{DOI}/citations?fields=title,year,citationCount,journal,externalIds&limit=10"
 ```
 
@@ -85,7 +96,7 @@ This returns papers that cite the given paper — useful for finding the latest 
 If you already have a DOI and need its details:
 
 ```bash
-curl -s -H "x-api-key: <SEMANTIC_SCHOLAR_API_KEY>" \
+sleep 2 && curl -s -H "x-api-key: <s2k-nXxM4Ftzq6YjOqFbtnEnasE4EYnId1k3i5aWVXk3>" \
   "https://api.semanticscholar.org/graph/v1/paper/DOI:{DOI}?fields=title,authors,year,abstract,citationCount,journal,externalIds,isOpenAccess,openAccessPdf"
 ```
 
@@ -157,6 +168,7 @@ Provide:
 
 ## Error Handling
 
+- If Semantic Scholar returns **429**: wait 10 seconds (`sleep 10`) and retry once; if still 429, fall back to Scopus
 - If Semantic Scholar returns no results, try Scopus as fallback
 - If both return no results, try broader/different search terms
 - If metadata incomplete, use CrossRef API on the DOI
