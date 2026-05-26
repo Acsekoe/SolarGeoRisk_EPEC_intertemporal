@@ -6,8 +6,8 @@ Your goal is to find, verify, and add a proper citation for a specified concept,
 
 This command uses two APIs. Replace the placeholders below with your own keys before use.
 
-- **Semantic Scholar** (free, request at https://www.semanticscholar.org/product/api): `<SEMANTIC_SCHOLAR_API_KEY>`
-- **Elsevier / Scopus** (free for academics at https://dev.elsevier.com/): `<ELSEVIER_API_KEY>`
+- **Semantic Scholar** (free, request at https://www.semanticscholar.org/product/api): `s2k-nXxM4Ftzq6YjOqFbtnEnasE4EYnId1k3i5aWVXk3`
+- **Elsevier / Scopus** (free for academics at https://dev.elsevier.com/): `c316f7c01c3319753a2b184c4cf39ef8`
 
 You can either substitute the placeholders inline, or export the keys as environment variables and reference them in the curl commands (e.g., `-H "x-api-key: $SEMANTIC_SCHOLAR_API_KEY"`).
 
@@ -28,7 +28,7 @@ The API key grants **1 request per second**. Exceeding this returns a 429 (Too M
 Use this exact curl template:
 
 ```bash
-curl -s -H "x-api-key: <SEMANTIC_SCHOLAR_API_KEY>" \
+curl -s -H "x-api-key: s2k-nXxM4Ftzq6YjOqFbtnEnasE4EYnId1k3i5aWVXk3" \
   "https://api.semanticscholar.org/graph/v1/paper/search?query=QUERY_HERE&fields=title,authors,year,abstract,citationCount,journal,externalIds,isOpenAccess,openAccessPdf&limit=10"
 ```
 
@@ -41,7 +41,7 @@ curl -s -H "x-api-key: <SEMANTIC_SCHOLAR_API_KEY>" \
 
 ```bash
 # Always add sleep 2 before each Semantic Scholar call after the first
-sleep 2 && curl -s -H "x-api-key: <SEMANTIC_SCHOLAR_API_KEY>" \
+sleep 2 && curl -s -H "x-api-key: s2k-nXxM4Ftzq6YjOqFbtnEnasE4EYnId1k3i5aWVXk3" \
   "https://api.semanticscholar.org/graph/v1/paper/search?query=large+language+model+energy+management&fields=title,authors,year,abstract,citationCount,journal,externalIds,isOpenAccess,openAccessPdf&limit=10"
 ```
 
@@ -70,7 +70,7 @@ Before selecting a paper, you MUST read its abstract to verify relevance.
 
 ```bash
 curl -s "https://api.elsevier.com/content/abstract/doi/{DOI}?view=META_ABS" \
-  -H "X-ELS-APIKey: <ELSEVIER_API_KEY>" \
+  -H "X-ELS-APIKey: c316f7c01c3319753a2b184c4cf39ef8" \
   -H "Accept: application/json" | jq '.["abstracts-retrieval-response"] | {title: .coredata["dc:title"], abstract: .coredata["dc:description"], journal: .coredata["prism:publicationName"]}'
 ```
 
@@ -85,7 +85,7 @@ curl -s "https://api.elsevier.com/content/abstract/doi/{DOI}?view=META_ABS" \
 When you find a highly relevant paper, use the citations endpoint to discover recent follow-up work:
 
 ```bash
-sleep 2 && curl -s -H "x-api-key: <s2k-nXxM4Ftzq6YjOqFbtnEnasE4EYnId1k3i5aWVXk3>" \
+sleep 2 && curl -s -H "x-api-key: s2k-nXxM4Ftzq6YjOqFbtnEnasE4EYnId1k3i5aWVXk3" \
   "https://api.semanticscholar.org/graph/v1/paper/DOI:{DOI}/citations?fields=title,year,citationCount,journal,externalIds&limit=10"
 ```
 
@@ -96,7 +96,7 @@ This returns papers that cite the given paper — useful for finding the latest 
 If you already have a DOI and need its details:
 
 ```bash
-sleep 2 && curl -s -H "x-api-key: <s2k-nXxM4Ftzq6YjOqFbtnEnasE4EYnId1k3i5aWVXk3>" \
+sleep 2 && curl -s -H "x-api-key: s2k-nXxM4Ftzq6YjOqFbtnEnasE4EYnId1k3i5aWVXk3" \
   "https://api.semanticscholar.org/graph/v1/paper/DOI:{DOI}?fields=title,authors,year,abstract,citationCount,journal,externalIds,isOpenAccess,openAccessPdf"
 ```
 
@@ -106,7 +106,7 @@ If Semantic Scholar returns insufficient results (e.g., very niche Elsevier-spec
 
 ```bash
 curl -s "https://api.elsevier.com/content/search/scopus?query=QUERY_HERE" \
-  -H "X-ELS-APIKey: <c316f7c01c3319753a2b184c4cf39ef8>" \
+  -H "X-ELS-APIKey: c316f7c01c3319753a2b184c4cf39ef8" \
   -H "Accept: application/json"
 ```
 
