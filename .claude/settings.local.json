@@ -1,53 +1,10 @@
 {
   "permissions": {
     "allow": [
-      "Bash(python3:*)",
-      "Bash(python -c ':*)",
-      "Bash(py --version)",
-      "Bash(where python:*)",
-      "Bash(where py:*)",
-      "Bash(python plots/plot_prices.py)",
-      "Bash(python add_vspace.py \"IEEE Paper/use_this_file.tex\")",
-      "Bash(pdflatex -interaction=nonstopmode use_this_file.tex)",
-      "Bash(awk '/^\\\\{\\\\\\\\color\\\\{blue\\\\}/{print NR\": OPEN\"} /^\\\\}$/{print NR\": CLOSE\"}' \"c:/EEG/EPEC/EPEC_VS_code/SolarGeoRisk_EPEC_intertemporal/IEEE Paper/use_this_file.tex\")",
-      "Bash(awk '/^\\\\{\\\\\\\\color/{print NR\": \"$0}' \"c:/EEG/EPEC/EPEC_VS_code/SolarGeoRisk_EPEC_intertemporal/IEEE Paper/use_this_file.tex\")",
-      "PowerShell($bytes = [System.IO.File]::ReadAllBytes\\(\"IEEE Paper\\\\use_this_file.tex\"\\); $content = [System.Text.Encoding]::UTF8.GetString\\($bytes\\); $lines = $content -split \"`n\"; for \\($i = 1295; $i -lt 1310; $i++\\) { $line = $lines[$i]; $hasNonAscii = $false; foreach \\($c in $line.ToCharArray\\(\\)\\) { if \\([int]$c -gt 127\\) { $hasNonAscii = $true; break } }; if \\($hasNonAscii\\) { Write-Output \\(\"{0}: {1}\" -f \\($i+1\\), $line\\); foreach \\($c in $line.ToCharArray\\(\\)\\) { if \\([int]$c -gt 127\\) { Write-Output \\(\"   U+{0:X4}: {1}\" -f [int]$c, $c\\) } } } })",
-      "Bash(python plots/plot_convergence.py)",
-      "Bash(python plots/plot_capacity_epec_demand.py)",
-      "Bash(python plots/plot_iter21_capacity_chords.py)",
-      "WebFetch(domain:www.iea.org)",
-      "Bash(bibtex use_this_file)",
-      "Bash(curl -s -H 'x-api-key: s2k-nXxM4Ftzq6YjOqFbtnEnasE4EYnId1k3i5aWVXk3' 'https://api.semanticscholar.org/graph/v1/paper/search?query=EPEC+equilibrium+problem+equilibrium+constraints+solar+PV+supply+chain&fields=title,authors,year,abstract,citationCount,journal,externalIds&limit=10')",
-      "Bash(curl -s -H 'x-api-key: s2k-nXxM4Ftzq6YjOqFbtnEnasE4EYnId1k3i5aWVXk3' 'https://api.semanticscholar.org/graph/v1/paper/search?query=MPEC+bilevel+optimization+solar+PV+market+equilibrium&fields=title,authors,year,abstract,citationCount,journal,externalIds&limit=10')",
-      "Bash(curl -s -H 'x-api-key: s2k-nXxM4Ftzq6YjOqFbtnEnasE4EYnId1k3i5aWVXk3' 'https://api.semanticscholar.org/graph/v1/paper/search?query=strategic+competition+solar+photovoltaic+market+game+theory&fields=title,authors,year,abstract,citationCount,journal,externalIds&limit=10')",
-      "Bash(curl -s -H 'x-api-key: s2k-nXxM4Ftzq6YjOqFbtnEnasE4EYnId1k3i5aWVXk3' 'https://api.semanticscholar.org/graph/v1/paper/search?query=bilevel+optimization+renewable+energy+supply+chain+Nash+equilibrium&fields=title,authors,year,abstract,citationCount,journal,externalIds&limit=10')",
-      "Bash(curl -s -H 'x-api-key: s2k-nXxM4Ftzq6YjOqFbtnEnasE4EYnId1k3i5aWVXk3' 'https://api.semanticscholar.org/graph/v1/paper/search?query=EPEC+energy+market+solar+geopolitical+risk&fields=title,authors,year,abstract,citationCount,journal,externalIds&limit=10')",
-      "Bash(curl -s -H 'x-api-key: s2k-nXxM4Ftzq6YjOqFbtnEnasE4EYnId1k3i5aWVXk3' 'https://api.semanticscholar.org/graph/v1/paper/search?query=bilevel+optimization+solar+photovoltaic+supply+chain+oligopoly&fields=title,authors,year,abstract,citationCount,journal,externalIds&limit=10')",
-      "Bash(curl -s -H 'x-api-key: s2k-nXxM4Ftzq6YjOqFbtnEnasE4EYnId1k3i5aWVXk3' 'https://api.semanticscholar.org/graph/v1/paper/search?query=equilibrium+problem+equilibrium+constraints+electricity+market+renewable&fields=title,authors,year,abstract,citationCount,journal,externalIds&limit=10')",
-      "Bash(curl -s -H 'x-api-key: s2k-nXxM4Ftzq6YjOqFbtnEnasE4EYnId1k3i5aWVXk3' 'https://api.semanticscholar.org/graph/v1/paper/search?query=EPEC+electricity+market+strategic+bidding+renewable&fields=title,authors,year,abstract,citationCount,journal,externalIds&limit=8')",
-      "Bash(curl -s 'https://api.elsevier.com/content/search/scopus?query=TITLE-ABS-KEY%28EPEC+solar+photovoltaic+supply+chain%29&count=10' -H 'X-ELS-APIKey: c316f7c01c3319753a2b184c4cf39ef8' -H 'Accept: application/json')",
-      "Bash(curl -s 'https://api.elsevier.com/content/search/scopus?query=TITLE-ABS-KEY%28equilibrium+problem+equilibrium+constraints+solar+OR+photovoltaic%29&count=10' -H 'X-ELS-APIKey: c316f7c01c3319753a2b184c4cf39ef8' -H 'Accept: application/json')",
-      "Bash(curl -s -H 'x-api-key: s2k-nXxM4Ftzq6YjOqFbtnEnasE4EYnId1k3i5aWVXk3' 'https://api.semanticscholar.org/graph/v1/author/search?query=Maximilian+Oitzinger&fields=name,paperCount,papers.title,papers.year,papers.journal,papers.externalIds&limit=5')",
-      "Bash(curl -s 'https://api.elsevier.com/content/search/scopus?query=AUTH%28Oitzinger%29&count=10' -H 'X-ELS-APIKey: c316f7c01c3319753a2b184c4cf39ef8' -H 'Accept: application/json')",
-      "Bash(curl -s -H 'x-api-key: s2k-nXxM4Ftzq6YjOqFbtnEnasE4EYnId1k3i5aWVXk3' 'https://api.semanticscholar.org/graph/v1/paper/search?query=solar+PV+deployment+Africa+evidence+growth&fields=title,authors,year,abstract,citationCount,journal,externalIds&limit=8')",
-      "Bash(curl -s -H 'x-api-key: s2k-nXxM4Ftzq6YjOqFbtnEnasE4EYnId1k3i5aWVXk3' 'https://api.semanticscholar.org/graph/v1/paper/search?query=China+industrial+policy+solar+PV+manufacturing+capacity+expansion+subsidy&fields=title,authors,year,abstract,citationCount,journal,externalIds&limit=8')",
-      "Bash(curl -s -H 'x-api-key: s2k-nXxM4Ftzq6YjOqFbtnEnasE4EYnId1k3i5aWVXk3' 'https://api.semanticscholar.org/graph/v1/paper/search?query=solar+PV+Africa+deployment+growth+energy+access&fields=title,authors,year,abstract,citationCount,journal,externalIds&limit=8')",
-      "Bash(curl -s -H 'x-api-key: s2k-nXxM4Ftzq6YjOqFbtnEnasE4EYnId1k3i5aWVXk3' 'https://api.semanticscholar.org/graph/v1/paper/search?query=first+evidence+take-off+solar+Africa&fields=title,authors,year,abstract,citationCount,journal,externalIds&limit=5')",
-      "Bash(curl -s -H 'x-api-key: s2k-nXxM4Ftzq6YjOqFbtnEnasE4EYnId1k3i5aWVXk3' 'https://api.semanticscholar.org/graph/v1/paper/search?query=Net+Zero+Industry+Act+Inflation+Reduction+Act+solar+PV+supply+chain&fields=title,authors,year,abstract,citationCount,journal,externalIds,isOpenAccess,openAccessPdf&limit=10')",
-      "Bash(curl -s 'https://api.elsevier.com/content/search/scopus?query=TITLE-ABS-KEY%28Net-Zero+Industry+Act+solar+PV+manufacturing%29&count=10' -H 'X-ELS-APIKey: c316f7c01c3319753a2b184c4cf39ef8' -H 'Accept: application/json')",
-      "Bash(curl -s 'https://api.elsevier.com/content/search/scopus?query=TITLE-ABS-KEY%28Inflation+Reduction+Act+solar+photovoltaic+manufacturing+supply+chain%29&count=10' -H 'X-ELS-APIKey: c316f7c01c3319753a2b184c4cf39ef8' -H 'Accept: application/json')",
-      "Bash(curl -s 'https://api.elsevier.com/content/abstract/doi/10.1016/j.isci.2025.112751?view=META_ABS' -H 'X-ELS-APIKey: c316f7c01c3319753a2b184c4cf39ef8' -H 'Accept: application/json')",
-      "Bash(curl -s 'https://api.elsevier.com/content/search/scopus?query=TITLE-ABS-KEY%28Net-Zero+Industry+Act+EU+industrial+policy+clean+energy%29&count=8' -H 'X-ELS-APIKey: c316f7c01c3319753a2b184c4cf39ef8' -H 'Accept: application/json')",
-      "Bash(curl -s 'https://api.elsevier.com/content/abstract/doi/10.1111/twec.13469?view=META_ABS' -H 'X-ELS-APIKey: c316f7c01c3319753a2b184c4cf39ef8' -H 'Accept: application/json')",
-<<<<<<< HEAD
-      "Bash(curl -s -H \"x-api-key: s2k-nXxM4Ftzq6YjOqFbtnEnasE4EYnId1k3i5aWVXk3\" \"https://api.semanticscholar.org/graph/v1/paper/DOI:10.1038/s41586-022-05316-6?fields=title,authors,year,abstract,journal\")",
-      "Bash(curl -s -H 'x-api-key: s2k-nXxM4Ftzq6YjOqFbtnEnasE4EYnId1k3i5aWVXk3' 'https://api.semanticscholar.org/graph/v1/paper/search?query=dual+competing+photovoltaic+supply+chains+social+welfare+subsidy+Chen+Zhang&fields=title,authors,year,abstract,journal&limit=3')",
-      "Bash(curl -s -H 'x-api-key: s2k-nXxM4Ftzq6YjOqFbtnEnasE4EYnId1k3i5aWVXk3' 'https://api.semanticscholar.org/graph/v1/paper/search?query=photovoltaic+supply+chain+government+subsidy+power+structures+Zhao+Li+Wang+Journal+Cleaner+Production&fields=title,authors,year,abstract,journal&limit=3')"
-=======
-      "Bash(curl -s -H 'x-api-key: s2k-nXxM4Ftzq6YjOqFbtnEnasE4EYnId1k3i5aWVXk3' 'https://api.semanticscholar.org/graph/v1/paper/DOI:10.1007/s10957-018-1391-5?fields=title,authors,year,abstract,citationCount,journal,externalIds')",
-      "Bash(curl -s \"https://link.springer.com/article/10.1007/s10957-018-1391-5\")",
-      "WebFetch(domain:www.researchgate.net)"
->>>>>>> origin/main
+      "Bash(*)",
+      "PowerShell(*)",
+      "WebSearch(*)",
+      "WebFetch(*)"
     ]
   }
 }

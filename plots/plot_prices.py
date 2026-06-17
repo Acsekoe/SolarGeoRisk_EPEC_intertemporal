@@ -58,40 +58,35 @@ for i, (ax, r) in enumerate(zip(axes, REGIONS)):
     periods_int = [int(p) for p in PERIODS]
 
     ax.plot(periods_int, plan_r["lam"],     color=COLOR_PLAN, linewidth=2.2,
-            marker="o", markersize=5.5, label="Planner")
+            marker="o", markersize=5.5, label="Global welfare maximization")
     ax.plot(periods_int, epec_r["lam"],     color=COLOR_EPEC, linewidth=2.2,
-            marker="s", markersize=5.5, label="EPEC")
+            marker="s", markersize=5.5,
+            label="Strategic market-clearing prices")
     ax.plot(periods_int, cost_r, color=COLOR_COST, linewidth=1.8,
             linestyle="--", marker="^", markersize=5.0, label="Regional manufacturing costs")
     ax.set_title(REGION_NAMES[r], fontsize=18, fontweight="normal")
     ax.set_xticks(periods_int)
     ax.set_xlabel("")
     if i % 2 == 0:
-        ax.set_ylabel("Price [$/kW]", fontsize=20)
+        ax.set_ylabel("Price [$/kW]", fontsize=18)
     else:
         ax.set_ylabel("")
+    ax.set_ylim(0, 370)
+    ax.set_yticks([0, 100, 200, 300])
     ax.grid(True, linestyle=":", alpha=0.5)
     ax.tick_params(axis="both", labelsize=15)
 
 # shared legend below the plots
 handles, labels = axes[0].get_legend_handles_labels()
-fig.legend(handles, labels, loc="lower center", ncol=3, fontsize=13,
-           framealpha=0.9, handletextpad=0.5, columnspacing=1.0,
-           borderpad=0.45, labelspacing=0.35, bbox_to_anchor=(0.5, 0.015))
-
-fig.text(
-    0.5,
-    0.083,
-    "EU and US: 2025 offers marginally underbid regional manufacturing costs; subsequent EPEC prices remain above costs.",
-    ha="center",
-    va="center",
-    fontsize=10.5,
-)
+fig.legend(handles, labels, loc="lower center", ncol=1, fontsize=15,
+           framealpha=0.9, handletextpad=0.5,
+           borderpad=0.45, labelspacing=0.35,
+           bbox_to_anchor=(0.5, 0.005), bbox_transform=fig.transFigure)
 
 fig.subplots_adjust(left=0.13, right=0.98, top=0.95, bottom=0.17,
                     wspace=0.34, hspace=0.50)
-out_path = os.path.join(OUT_DIR, "prices_planner_vs_epec.png")
-out_pdf = os.path.join(OUT_DIR, "prices_planner_vs_epec.pdf")
+out_path = os.path.join(OUT_DIR, "prices_planner_vs_epec_v3.png")
+out_pdf = os.path.join(OUT_DIR, "prices_planner_vs_epec_v3.pdf")
 plt.savefig(out_path, dpi=300, bbox_inches="tight")
 plt.savefig(out_pdf, bbox_inches="tight")
 print(f"Saved to {out_path}")

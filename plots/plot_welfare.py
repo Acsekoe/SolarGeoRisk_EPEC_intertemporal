@@ -425,7 +425,7 @@ ax_stack.set_yticks(y)
 ax_stack.set_yticklabels(df_total["region"], fontsize=15)
 ax_stack.invert_yaxis()
 ax_stack.set_xlabel(
-    "[billion USD/year]",
+    "[billion $/year]",
     fontsize=15,
 )
 ax_stack.grid(True, axis="x", linestyle=":", color=COLOR_GRID)
@@ -458,8 +458,8 @@ stack_limit = max(abs(negative_base.min()), abs(positive_base.max())) * 1.12
 ax_stack.set_xlim(-stack_limit, stack_limit)
 fig_stack.subplots_adjust(left=0.23, right=0.96, top=0.96, bottom=0.36)
 
-out_stack_png = os.path.join(OUT_DIR, "welfare_epec_vs_planner_stacked_annual.png")
-out_stack_pdf = os.path.join(OUT_DIR, "welfare_epec_vs_planner_stacked_annual.pdf")
+out_stack_png = os.path.join(OUT_DIR, "welfare_epec_vs_planner_stacked_annual_v2.png")
+out_stack_pdf = os.path.join(OUT_DIR, "welfare_epec_vs_planner_stacked_annual_v2.pdf")
 fig_stack.savefig(out_stack_png, dpi=180, bbox_inches="tight")
 fig_stack.savefig(out_stack_pdf, bbox_inches="tight")
 print(f"Saved to {out_stack_png}")

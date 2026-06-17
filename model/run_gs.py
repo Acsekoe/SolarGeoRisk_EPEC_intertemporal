@@ -32,7 +32,6 @@ except ImportError:
 # Define project root relative to this script
 SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(SCRIPTS_DIR)
-_VALID_CONVERGENCE_MODES = {"strategy", "objective", "combined", "absolute"}
 
 # ── Player sweep order ────────────────────────────────────────────────────────
 # Edit this list to control the Gauss-Seidel sweep order.
@@ -63,20 +62,10 @@ class RunConfig:
     omega_aggressive_sweeps: int = 5
     omega_ramp_iters: int = 10
     tol_strat: float = 1e-2
-    tol_obj: float = 1e-2
     stable_iters: int = 3
     eps_x: float = 1e-3
     eps_comp: float = 1e-3
     workdir: str | None = None
-    convergence_mode: str = "absolute"  # "strategy", "objective", "combined", or "absolute"
-
-    # --- Absolute convergence thresholds (used when convergence_mode="absolute") ---
-    # tol_p_abs: max allowed sweep-to-sweep change in p_offer [USD/kW]
-    # tol_dk_abs: max allowed sweep-to-sweep change in dK_net [GW/yr]
-    # Both must hold for stable_iters consecutive sweeps.
-    tol_p_abs:  float = 2.0    # $2/kW — relaxed to avoid plateau stall
-    tol_dk_abs: float = 0.25   # 0.25 GW/yr — relaxed to avoid plateau stall
-
     # Exclude the terminal buffer period (times[-1], i.e. 2045) from the
     # convergence metric.  Also drops the last move_time (2040→2045 transition)
     # from the dK_net convergence check.  Useful when 2045 is a dummy period.
@@ -488,14 +477,7 @@ def run(cfg: RunConfig) -> str:
     iters = int(cfg.iters)
     omega = float(cfg.omega)
     tol_rel = float(cfg.tol_strat)
-    tol_obj = float(cfg.tol_obj)
     stable_iters = int(cfg.stable_iters)
-    convergence_mode = cfg.convergence_mode.strip().lower()
-    if convergence_mode not in _VALID_CONVERGENCE_MODES:
-        raise ValueError(
-            f"Unsupported convergence_mode '{cfg.convergence_mode}'. "
-            f"Supported: {sorted(_VALID_CONVERGENCE_MODES)}."
-        )
 
     run_id = datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + uuid.uuid4().hex[:6]
     os.makedirs(out_dir, exist_ok=True)
@@ -516,7 +498,7 @@ def run(cfg: RunConfig) -> str:
         f"omega_ramp_iters={cfg.omega_ramp_iters}"
     )
     print(f"[CONFIG] eps_x={float(data.eps_x):g} eps_comp={float(data.eps_comp):g}")
-    print(f"[CONFIG] convergence_mode={convergence_mode}")
+    print(f"[CONFIG] convergence_metric=relative_strategy_change")
     effective_order = cfg.player_order if cfg.player_order is not None else PLAYER_ORDER
     print(f"[CONFIG] player_order={effective_order}")
     print(f"[CONFIG] workdir={workdir}{' (keep)' if cfg.keep_workdir else ' (auto-cleanup)'}")
@@ -528,8 +510,6 @@ def run(cfg: RunConfig) -> str:
     def _iter_log(it: int, state: dict[str, dict], r_strat: float, stable_count: int) -> None:
         sweep_elapsed = time.perf_counter() - timing_state["sweep_start"]
         sweep_times.append(sweep_elapsed)
-        max_abs_dp      = state.get("_max_abs_dp",       float("nan"))
-        max_abs_ddk     = state.get("_max_abs_ddk",      float("nan"))
         omega_cur       = state.get("_omega_current",    float("nan"))
         omega_next      = state.get("_omega_next",       float("nan"))
         omega_reason    = state.get("_omega_reason",     "")
@@ -538,10 +518,9 @@ def run(cfg: RunConfig) -> str:
         c_pen_a_cur     = state.get("_c_pen_a_current", float("nan"))
         c_pen_dk_cur    = state.get("_c_pen_dk_current", float("nan"))
         print(
-            f"[ITER {it}] |dp|={max_abs_dp:.3g} $/kW  |ddk|={max_abs_ddk:.3g} GW/yr"
+            f"[ITER {it}] r_strat={r_strat:.4g}"
             f"  omega={omega_cur:.3g}->{omega_next:.3g}"
             f"  c_pen=(q={c_pen_q_cur:.3g}, p={c_pen_p_cur:.3g}, a={c_pen_a_cur:.3g}, dk={c_pen_dk_cur:.3g})"
-            f"  r_strat={r_strat:.4g}"
             f"  stable={stable_count}  t={sweep_elapsed:.2f}s",
             flush=True,
         )
@@ -591,16 +570,12 @@ def run(cfg: RunConfig) -> str:
             omega_aggressive_sweeps=cfg.omega_aggressive_sweeps,
             omega_ramp_iters=cfg.omega_ramp_iters,
             tol_rel=cfg.tol_strat,
-            tol_obj=cfg.tol_obj,
             stable_iters=stable_iters,
             working_directory=workdir,
             iter_callback=_iter_log,
             initial_state=init_state,
-            convergence_mode=convergence_mode,
             player_order=effective_order,
             exclude_terminal_from_convergence=cfg.exclude_terminal_from_convergence,
-            tol_p_abs=cfg.tol_p_abs,
-            tol_dk_abs=cfg.tol_dk_abs,
             c_pen_q_mid=cfg.c_pen_q_mid,
             c_pen_p_mid=cfg.c_pen_p_mid,
             c_pen_a_mid=cfg.c_pen_a_mid,
@@ -633,9 +608,8 @@ def run(cfg: RunConfig) -> str:
                 "omega_aggressive_sweeps": int(cfg.omega_aggressive_sweeps),
                 "omega_ramp_iters":      int(cfg.omega_ramp_iters),
                 "tol_rel":               tol_rel,
-                "tol_obj":               float(cfg.tol_obj),
                 "stable_iters":          stable_iters,
-                "convergence_mode":      convergence_mode,
+                "convergence_metric":     "relative_strategy_change",
                 # --- Solver ---
                 "solver":                solver,
                 "feastol":               feastol,

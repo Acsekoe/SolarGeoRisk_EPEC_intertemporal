@@ -25,14 +25,10 @@ def solve_gs_intertemporal(
     working_directory: str | None = None,
     iter_callback: Callable[[int, Dict[str, Dict], float, int], None] | None = None,
     initial_state: Dict[str, Dict] | None = None,
-    convergence_mode: str = "absolute",
-    tol_obj: float = 1e-6,
     shuffle_players: bool = False,
     player_order: List[str] | None = None,
     force_ch_last: bool = True,
     exclude_terminal_from_convergence: bool = True,
-    tol_p_abs: float = 1.0,
-    tol_dk_abs: float = 0.1,
     c_pen_q_mid: float | None = None,
     c_pen_p_mid: float | None = None,
     c_pen_a_mid: float | None = None,
@@ -131,8 +127,6 @@ def solve_gs_intertemporal(
         theta_Q = {(r, tp): 0.8 * float(implied_kcap[(r, tp)]) for r in data.players for tp in times}
         theta_p_offer = {(ex, im, tp): 0.5 * float(data.p_offer_ub[(ex, im)]) for ex in data.regions for im in data.regions for tp in times}
         theta_a_bid = {(r, tp): _it._true_demand_intercept(data, r, tp) for r in data.players for tp in times}
-
-    theta_obj: Dict[str, float] = {r: 0.0 for r in data.players}
 
     # ---- Warm-start GAMS variable levels from theta dicts ----
     # Without this, ipopt starts all POSITIVE variables at level 0, which
@@ -304,7 +298,6 @@ def solve_gs_intertemporal(
         prev_Kcap = dict(theta_Kcap)
         prev_poffer = dict(theta_p_offer)
         prev_a_bid = dict(theta_a_bid)
-        prev_obj = dict(theta_obj)
 
         sweep_order = list(base_order)
         if shuffle_players:
@@ -340,7 +333,6 @@ def solve_gs_intertemporal(
             Kcap_sol = state.get("Kcap", {})
             poffer_sol = state.get("p_offer", {})
             a_bid_sol = state.get("a_bid", {})
-            obj_sol = state.get("obj", {})
 
             # Update net capacity changes.
             for tp in move_times:
@@ -387,9 +379,6 @@ def solve_gs_intertemporal(
                     if sk in a_bid_sol:
                         theta_a_bid[sk] = (1.0 - omega_it) * theta_a_bid[sk] + omega_it * float(a_bid_sol[sk])
 
-            if isinstance(obj_sol, dict):
-                theta_obj[p] = float(obj_sol.get(p, 0.0))
-
         # ---- Convergence metrics ----
         # When exclude_terminal_from_convergence=True:
         #  - 2045 is dropped from conv_times (excludes Q_offer, p_offer, a_bid at 2045)
@@ -398,26 +387,22 @@ def solve_gs_intertemporal(
         conv_times = times[:-1] if exclude_terminal_from_convergence and len(times) > 1 else times
         conv_move_times = move_times[:-1] if exclude_terminal_from_convergence and len(move_times) > 1 else move_times
 
-        # Track absolute changes for "absolute" convergence mode
-        max_abs_dp  = 0.0   # max |Δp_offer|  across all arcs/periods  [USD/kW]
-        max_abs_ddk = 0.0   # max |ΔdK_net|   across all players/periods [GW/yr]
-
         # Per-variable diagnostics: collect the worst offenders each sweep
-        _diag_dk: List[Tuple[str, str, float, float]]  = []   # (r, tp, old, new)
-        _diag_q:  List[Tuple[str, str, float, float]]  = []
-        _diag_p:  List[Tuple[str, str, str, float, float]] = []  # (ex, im, tp, old, new)
+        _diag_dk: List[Tuple[str, str, float, float, float]]  = []   # (r, tp, old, new, rel)
+        _diag_q:  List[Tuple[str, str, float, float, float]]  = []
+        _diag_p:  List[Tuple[str, str, str, float, float, float]] = []  # (ex, im, tp, old, new, rel)
 
         for r in data.players:
             for tp in conv_move_times:
                 old_dk, new_dk = prev_dK_net[(r, tp)], theta_dK_net[(r, tp)]
-                abs_dk = abs(new_dk - old_dk)
-                max_abs_ddk = max(max_abs_ddk, abs_dk)
-                r_strat = max(r_strat, _scaled_change(new_dk, old_dk, _dk_scale(r)))
-                _diag_dk.append((r, tp, old_dk, new_dk))
+                rel = _scaled_change(new_dk, old_dk, _dk_scale(r))
+                r_strat = max(r_strat, rel)
+                _diag_dk.append((r, tp, old_dk, new_dk, rel))
             for tp in conv_times:
                 old_q, new_q = prev_Q[(r, tp)], theta_Q[(r, tp)]
-                r_strat = max(r_strat, _scaled_change(new_q, old_q, _q_scale(r)))
-                _diag_q.append((r, tp, old_q, new_q))
+                rel = _scaled_change(new_q, old_q, _q_scale(r))
+                r_strat = max(r_strat, rel)
+                _diag_q.append((r, tp, old_q, new_q, rel))
 
                 if not fix_a_bid:
                     a_scale = _it._true_demand_intercept(data, r, tp)
@@ -428,56 +413,34 @@ def solve_gs_intertemporal(
                 for tp in conv_times:
                     key = (ex, im, tp)
                     old_p, new_p = prev_poffer[key], theta_p_offer[key]
-                    abs_dp = abs(new_p - old_p)
-                    max_abs_dp = max(max_abs_dp, abs_dp)
-                    r_strat = max(r_strat, _scaled_change(new_p, old_p, _p_scale(ex, im)))
-                    _diag_p.append((ex, im, tp, old_p, new_p))
+                    rel = _scaled_change(new_p, old_p, _p_scale(ex, im))
+                    r_strat = max(r_strat, rel)
+                    _diag_p.append((ex, im, tp, old_p, new_p, rel))
 
         # Print top movers for this sweep
-        _diag_dk.sort(key=lambda x: abs(x[3] - x[2]), reverse=True)
-        _diag_q.sort(key=lambda x: abs(x[3] - x[2]), reverse=True)
-        _diag_p.sort(key=lambda x: abs(x[4] - x[3]), reverse=True)
-        print(f"  [iter {it}] top dK_net changes:")
-        for r, tp, old, new in _diag_dk[:3]:
-            print(f"    {r}/{tp}: {old:+.3f} -> {new:+.3f}  (d={new-old:+.3f})")
-        print(f"  [iter {it}] top Q_offer changes:")
-        for r, tp, old, new in _diag_q[:3]:
-            print(f"    {r}/{tp}: {old:.2f} -> {new:.2f}  (d={new-old:+.2f})")
-        print(f"  [iter {it}] top p_offer changes:")
-        for ex, im, tp, old, new in _diag_p[:5]:
-            print(f"    {ex}->{im}/{tp}: {old:.2f} -> {new:.2f}  (d={new-old:+.2f})")
+        _diag_dk.sort(key=lambda x: x[4], reverse=True)
+        _diag_q.sort(key=lambda x: x[4], reverse=True)
+        _diag_p.sort(key=lambda x: x[5], reverse=True)
+        print(f"  [iter {it}] top relative dK_net changes:")
+        for r, tp, old, new, rel in _diag_dk[:3]:
+            print(f"    {r}/{tp}: {old:+.3f} -> {new:+.3f}  (rel={rel:.3g})")
+        print(f"  [iter {it}] top relative Q_offer changes:")
+        for r, tp, old, new, rel in _diag_q[:3]:
+            print(f"    {r}/{tp}: {old:.2f} -> {new:.2f}  (rel={rel:.3g})")
+        print(f"  [iter {it}] top relative p_offer changes:")
+        for ex, im, tp, old, new, rel in _diag_p[:5]:
+            print(f"    {ex}->{im}/{tp}: {old:.2f} -> {new:.2f}  (rel={rel:.3g})")
 
-        r_obj = 0.0
-        for r in data.players:
-            r_obj = max(r_obj, _scaled_change(theta_obj.get(r, 0.0), prev_obj.get(r, 0.0), 1000.0))
-
-        metric_met = False
-        if convergence_mode == "combined":
-            metric_met = (r_strat <= tol_rel) and (r_obj <= tol_obj)
-        elif convergence_mode == "objective":
-            metric_met = r_obj <= tol_obj
-        elif convergence_mode == "absolute":
-            metric_met = (max_abs_dp <= tol_p_abs) and (max_abs_ddk <= tol_dk_abs)
-        else:  # "strategy"
-            metric_met = r_strat <= tol_rel
+        metric_met = r_strat <= tol_rel
 
         stable_count = stable_count + 1 if metric_met else 0
 
         omega_next = _scheduled_omega(it + 1)
         omega_reason_parts: List[str] = []
         if adaptive_omega and prev_metrics is not None and it >= omega_aggressive_sweeps:
-            if max_abs_ddk > max(1.5 * prev_metrics["max_abs_ddk"], 2.5 * tol_dk_abs):
-                omega_next = min(omega_next, max(float(omega_min), 0.75 * omega_it))
-                omega_reason_parts.append("dK spike")
-            if convergence_mode in {"strategy", "combined"} and r_strat > 1.2 * prev_metrics["r_strat"]:
+            if r_strat > 1.2 * prev_metrics["r_strat"]:
                 omega_next = min(omega_next, max(float(omega_min), 0.8 * omega_it))
                 omega_reason_parts.append("strategy residual worsened")
-            if convergence_mode in {"strategy", "combined", "absolute"} and max_abs_dp > max(1.5 * prev_metrics["max_abs_dp"], 2.5 * tol_p_abs):
-                omega_next = min(omega_next, max(float(omega_min), 0.75 * omega_it))
-                omega_reason_parts.append("price spike")
-            if (it - omega_aggressive_sweeps) >= omega_ramp_iters and stable_count == 0 and max_abs_ddk > 5.0 * tol_dk_abs:
-                omega_next = min(omega_next, max(float(omega_min), 0.85 * omega_it))
-                omega_reason_parts.append("late-stage damping")
 
         omega_next = min(float(omega), max(float(omega_min), omega_next))
         if adaptive_omega:
@@ -495,9 +458,6 @@ def solve_gs_intertemporal(
         row_data: Dict[str, object] = {
             "iter": it,
             "r_strat": float(r_strat),
-            "r_obj": float(r_obj),
-            "max_abs_dp": float(max_abs_dp),
-            "max_abs_ddk": float(max_abs_ddk),
             "c_pen_q": float(c_pen_current["q"]),
             "c_pen_p": float(c_pen_current["p"]),
             "c_pen_a": float(c_pen_current["a"]),
@@ -514,8 +474,6 @@ def solve_gs_intertemporal(
         if iter_callback is not None:
             if shuffle_players:
                 last_state["_sweep_order"] = list(sweep_order)
-            last_state["_max_abs_dp"]      = float(max_abs_dp)
-            last_state["_max_abs_ddk"]     = float(max_abs_ddk)
             last_state["_omega_current"]   = float(omega_it)
             last_state["_omega_next"]      = float(omega_next)
             last_state["_omega_reason"]    = omega_reason
@@ -525,8 +483,6 @@ def solve_gs_intertemporal(
             last_state["_c_pen_dk_current"] = float(c_pen_current["dk"])
             iter_callback(it, last_state, float(r_strat), int(stable_count))
             last_state.pop("_sweep_order",      None)
-            last_state.pop("_max_abs_dp",       None)
-            last_state.pop("_max_abs_ddk",      None)
             last_state.pop("_omega_current",    None)
             last_state.pop("_omega_next",       None)
             last_state.pop("_omega_reason",     None)
@@ -537,8 +493,6 @@ def solve_gs_intertemporal(
 
         prev_metrics = {
             "r_strat": float(r_strat),
-            "max_abs_dp": float(max_abs_dp),
-            "max_abs_ddk": float(max_abs_ddk),
         }
         omega_current = float(omega_next)
 

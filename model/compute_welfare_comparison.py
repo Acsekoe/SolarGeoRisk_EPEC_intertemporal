@@ -19,16 +19,17 @@ import pandas as pd
 
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-INPUT_PATH = os.path.join(SCRIPT_DIR, "inputs", "input_data_intertemporal.xlsx")
-PLANNER_PATH = os.path.join(SCRIPT_DIR, "outputs", "llp_planner_results.xlsx")
+PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
+INPUT_PATH = os.path.join(PROJECT_ROOT, "inputs", "input_data_intertemporal.xlsx")
+PLANNER_PATH = os.path.join(PROJECT_ROOT, "outputs", "llp_planner_results.xlsx")
 EPEC_PATH = os.path.join(
-    SCRIPT_DIR,
+    PROJECT_ROOT,
     "outputs",
     "sens",
     "converged",
     "sens_ch-row-apac-us-eu-af.xlsx",
 )
-OUT_PATH = os.path.join(SCRIPT_DIR, "outputs", "welfare_comparison.xlsx")
+OUT_PATH = os.path.join(PROJECT_ROOT, "outputs", "welfare_comparison.xlsx")
 
 SELECTED_RUN = "sens_ch-row-apac-us-eu-af"
 PERIODS = ["2025", "2030", "2035", "2040"]
@@ -36,7 +37,7 @@ REGIONS = ["ch", "eu", "us", "apac", "af", "row"]
 
 
 def load_model_data():
-    sys.path.insert(0, os.path.join(SCRIPT_DIR, "model"))
+    sys.path.insert(0, SCRIPT_DIR)
     from data_prep import load_data_from_excel
 
     with contextlib.redirect_stdout(io.StringIO()):

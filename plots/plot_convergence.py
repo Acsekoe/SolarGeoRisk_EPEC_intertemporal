@@ -39,6 +39,26 @@ DARK_PALETTE = [
 NONCONV_COLOR = "#B0B0B0"
 NONCONV_STYLE = (0, (5, 2))
 
+# Keep the converged labels aligned with the equilibrium numbering used in
+# Table III of the paper, independently of filesystem ordering.
+EQUILIBRIUM_NUMBERS = {
+    "ch-af-apac-eu-row-us": 1,
+    "ch-af-eu-us-row-apac": 2,
+    "ch-row-apac-us-eu-af": 3,
+    "af-eu-us-apac-row-ch": 4,
+    "eu-us-af-row-apac-ch": 5,
+    "us-apac-af-row-eu-ch": 6,
+    "us-row-eu-apac-af-ch": 7,
+}
+
+
+def sequence_label(label, equilibrium_number=None):
+    sequence = label.upper()
+    if equilibrium_number is None:
+        return sequence
+    return f"({equilibrium_number}) {sequence}"
+
+
 # ---------------------------------------------------------------------------
 # Load iters data from all sens files, separated by convergence status
 # ---------------------------------------------------------------------------
@@ -68,23 +88,26 @@ fig, ax = plt.subplots(figsize=(7.0, 3.8))
 conv_handles = []
 for i, (label, df) in enumerate(converged_runs.items()):
     color = DARK_PALETTE[i % len(DARK_PALETTE)]
-    line, = ax.plot(df["iter"], df["r_strat"], label=label, color=color,
+    legend_label = sequence_label(label, EQUILIBRIUM_NUMBERS[label])
+    line, = ax.plot(df["iter"], df["r_strat"], label=legend_label, color=color,
                     linestyle="-", linewidth=1.8, marker="o", markersize=3.5, zorder=3)
     conv_handles.append(line)
 
 # Non-converged: uniform light grey, dashed, plotted underneath
 nonconv_handles = []
 for label, df in nonconverged_runs.items():
-    line, = ax.plot(df["iter"], df["r_strat"], label=label, color=NONCONV_COLOR,
+    legend_label = sequence_label(label, EQUILIBRIUM_NUMBERS[label])
+    line, = ax.plot(df["iter"], df["r_strat"], label=legend_label,
+                    color=NONCONV_COLOR,
                     linestyle=NONCONV_STYLE, linewidth=1.4, marker="o", markersize=2.5,
                     alpha=0.9, zorder=2)
     nonconv_handles.append(line)
 
-ax.set_xlabel("iterations", fontsize=20)
+ax.set_xlabel("Iterations", fontsize=20)
 ax.set_ylabel(r"$\Delta\theta$", fontsize=20)
 ax.tick_params(axis="both", labelsize=15)
 
-# Single legend with two column headers ("Converged" / "Non-converged")
+# Single legend with two column headers ("Convergence" / "No Convergence")
 from matplotlib.lines import Line2D
 header_proxy = Line2D([0], [0], color="none")
 
@@ -92,26 +115,28 @@ header_proxy = Line2D([0], [0], color="none")
 # number of rows (pad converged column with one blank).
 n_rows = max(len(conv_handles), len(nonconv_handles)) + 1  # +1 for header
 conv_col    = [header_proxy] + conv_handles    + [header_proxy] * (n_rows - 1 - len(conv_handles))
-conv_labels = ["Converged"]  + [h.get_label() for h in conv_handles] + [""] * (n_rows - 1 - len(conv_handles))
+conv_labels = ["Convergence"] + [h.get_label() for h in conv_handles] + [""] * (n_rows - 1 - len(conv_handles))
 nc_col      = [header_proxy] + nonconv_handles + [header_proxy] * (n_rows - 1 - len(nonconv_handles))
-nc_labels   = ["Non-converged"] + [h.get_label() for h in nonconv_handles] + [""] * (n_rows - 1 - len(nonconv_handles))
+nc_labels   = ["No Convergence"] + [h.get_label() for h in nonconv_handles] + [""] * (n_rows - 1 - len(nonconv_handles))
 
 leg = ax.legend(conv_col + nc_col, conv_labels + nc_labels,
                 ncol=2, loc="upper right", bbox_to_anchor=(0.98, 1.01),
-                fontsize=13, framealpha=0.9, handletextpad=0.4,
-                columnspacing=0.9, borderpad=0.5, labelspacing=0.4,
-                markerscale=0.9)
+                fontsize=9.5, framealpha=0.9, handlelength=1.6,
+                handletextpad=0.3, columnspacing=0.7, borderpad=0.4,
+                labelspacing=0.55, markerscale=0.85)
 # Bold the two header rows
 texts = leg.get_texts()
-texts[0].set_fontweight("bold")        # "Converged" header
-texts[n_rows].set_fontweight("bold")   # "Non-converged" header
+texts[0].set_fontweight("bold")        # "Convergence" header
+texts[0].set_fontsize(12.6)
+texts[n_rows].set_fontweight("bold")   # "No Convergence" header
+texts[n_rows].set_fontsize(12.6)
 all_runs = {**converged_runs, **nonconverged_runs}
 ax.set_xlim(1, max(df["iter"].max() for df in all_runs.values()))
 ax.set_ylim(bottom=0)
 ax.grid(True, linestyle=":", alpha=0.5)
 
 plt.tight_layout()
-out_path = os.path.join(OUT_DIR, "RESULT_convergence_pattern.png")
+out_path = os.path.join(OUT_DIR, "RESULT_convergence_pattern_v3.png")
 plt.savefig(out_path, dpi=300, bbox_inches="tight")
 print(f"Saved to {out_path}")
 plt.show()
