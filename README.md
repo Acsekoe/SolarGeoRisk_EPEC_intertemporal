@@ -59,7 +59,7 @@ Key `RunConfig` settings to tune convergence:
 |-----------|---------|-------------|
 | `iters` | 30 | Maximum Gauss-Seidel iterations |
 | `omega` | 0.8 | Initial damping factor |
-| `omega_min` | 0.4 | Minimum damping (paper uses 0.6) |
+| `omega_min` | 0.4 | Minimum damping  |
 | `tol_strat` | 1e-2 | Convergence tolerance on the maximum relative strategy change (`Delta theta`) |
 | `stable_iters` | 3 | Number of consecutive sweeps below `tol_strat` required for convergence |
 
