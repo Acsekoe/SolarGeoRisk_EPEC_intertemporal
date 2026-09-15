@@ -8,6 +8,7 @@ The stacked bars show regional installed capacity (Kcap). Black markers show
 aggregate global demand, computed as the sum of regional x_dem in each period.
 """
 
+import argparse
 import os
 
 import numpy as np
@@ -31,14 +32,25 @@ plt.rcParams.update({
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.normpath(os.path.join(SCRIPT_DIR, ".."))
 PLANNER_PATH = os.path.join(ROOT_DIR, "outputs", "llp_planner_results.xlsx")
-EPEC_PATH = os.path.join(
+DEFAULT_EPEC_PATH = os.path.join(
     ROOT_DIR,
     "outputs",
     "sens",
     "converged",
     "sens_ch-row-apac-us-eu-af.xlsx",
 )
-OUT_DIR = os.path.join(ROOT_DIR, "outputs", "figures")
+DEFAULT_OUT_DIR = os.path.join(ROOT_DIR, "outputs", "figures")
+
+parser = argparse.ArgumentParser(
+    description="Plot EPEC manufacturing capacity and global demand."
+)
+parser.add_argument("--epec-path", default=DEFAULT_EPEC_PATH)
+parser.add_argument("--output-dir", default=DEFAULT_OUT_DIR)
+parser.add_argument("--output-suffix", default="")
+args = parser.parse_args()
+
+EPEC_PATH = os.path.abspath(args.epec_path)
+OUT_DIR = os.path.abspath(args.output_dir)
 os.makedirs(OUT_DIR, exist_ok=True)
 
 PERIODS = ["2025", "2030", "2035", "2040"]
@@ -226,8 +238,12 @@ ax.legend(
 
 fig.subplots_adjust(left=0.13, right=0.98, top=0.96, bottom=0.31)
 
-out_png = os.path.join(OUT_DIR, "capacity_epec_stacked_with_global_demand.png")
-out_pdf = os.path.join(OUT_DIR, "capacity_epec_stacked_with_global_demand.pdf")
+out_png = os.path.join(
+    OUT_DIR, f"capacity_epec_stacked_with_global_demand{args.output_suffix}.png"
+)
+out_pdf = os.path.join(
+    OUT_DIR, f"capacity_epec_stacked_with_global_demand{args.output_suffix}.pdf"
+)
 fig.savefig(out_png, dpi=300, bbox_inches="tight")
 fig.savefig(out_pdf, bbox_inches="tight")
 print(f"Saved to {out_png}")

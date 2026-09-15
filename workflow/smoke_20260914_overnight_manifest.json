@@ -1,0 +1,147 @@
+{
+  "created": "2026-09-14T22:42:56+02:00",
+  "run_id": "smoke_20260914_overnight",
+  "status": "complete",
+  "pid": 21852,
+  "output_root": "outputs\\equilibrium_search\\ch-row-apac-us-eu-af\\overnight\\smoke_20260914_overnight",
+  "workflow_manifest": "workflow\\smoke_20260914_overnight_manifest.json",
+  "resources": {
+    "hostname": "PC-Alexander",
+    "logical_cpus": 16,
+    "physical_cores": 8,
+    "total_memory_bytes": 33515065344,
+    "available_memory_bytes_at_launch": 5913702400
+  },
+  "worker_count": 3,
+  "worker_policy": "process based; outer workers limited by physical cores and available memory; BLAS threads capped at one",
+  "source_workbook": "outputs\\sens\\converged\\sens_ch-row-apac-us-eu-af.xlsx",
+  "source_iteration": 21,
+  "standard_player_order": [
+    "ch",
+    "row",
+    "apac",
+    "us",
+    "eu",
+    "af"
+  ],
+  "local_start_checkpoint": "outputs\\equilibrium_search\\ch-row-apac-us-eu-af\\local_paper_profile_zero_prox\\branch_F_alpha_0p50\\sweep_006.json",
+  "local_start_audit": "outputs\\equilibrium_search\\ch-row-apac-us-eu-af\\local_paper_profile_zero_prox\\branch_F_alpha_0p50\\audit_sweep_006.json",
+  "preserved_certified_checkpoint": "outputs\\equilibrium_search\\ch-row-apac-us-eu-af\\nested_zero_prox\\checkpoint_20260914_184749.json",
+  "preserved_certified_audit": "outputs\\equilibrium_search\\ch-row-apac-us-eu-af\\nested_zero_prox\\audit_20260914_184948.json",
+  "original_proximal_penalties": {
+    "q": 2.0,
+    "p": 3.0,
+    "a": 2.0,
+    "dk": 2.0
+  },
+  "branches": {
+    "O1": {
+      "description": "paper profile, zero proximal, fixed alpha 0.20",
+      "start": "paper",
+      "mode": "fixed",
+      "alpha": 0.2,
+      "max_sweeps": 150
+    },
+    "O2": {
+      "description": "paper profile, zero proximal, fixed alpha 0.10",
+      "start": "paper",
+      "mode": "fixed",
+      "alpha": 0.1,
+      "max_sweeps": 200
+    },
+    "O3": {
+      "description": "paper profile, zero proximal, adaptive damping",
+      "start": "paper",
+      "mode": "adaptive",
+      "alpha": 0.5,
+      "alpha_min": 0.025,
+      "alpha_max": 0.65,
+      "max_sweeps": 150
+    },
+    "O4": {
+      "description": "paper profile, proximal continuation/homotopy",
+      "start": "paper",
+      "mode": "homotopy",
+      "alpha": 0.5,
+      "positive_stage_sweeps": 12,
+      "zero_stage_sweeps": 50
+    },
+    "O5": {
+      "description": "Branch-F alpha-0.50 sweep-6 profile, zero proximal, fixed alpha 0.20",
+      "start": "local",
+      "mode": "fixed",
+      "alpha": 0.2,
+      "max_sweeps": 150
+    },
+    "O6": {
+      "description": "Branch-F alpha-0.50 sweep-6 profile, zero proximal, adaptive damping",
+      "start": "local",
+      "mode": "adaptive",
+      "alpha": 0.3,
+      "alpha_min": 0.025,
+      "alpha_max": 0.5,
+      "max_sweeps": 150
+    }
+  },
+  "phase": "complete",
+  "branch_results": [
+    {
+      "created": "2026-09-14T22:42:57+02:00",
+      "branch": "O1",
+      "pid": 23224,
+      "status": "complete",
+      "sweeps_completed": 1,
+      "last_checkpoint": "outputs\\equilibrium_search\\ch-row-apac-us-eu-af\\overnight\\smoke_20260914_overnight\\branches\\O1\\sweep_001.json",
+      "ending_max_raw_unilateral_gain": 0.4302039710375391,
+      "ending_distance_from_paper": 0.011890367502368798,
+      "cycle_ever_detected": false,
+      "elapsed_seconds": 0.5229894000221975
+    }
+  ],
+  "lightweight_best": {
+    "created": "2026-09-14T22:42:58+02:00",
+    "source": "lightweight",
+    "by_branch": {},
+    "global": null
+  },
+  "final_best": {
+    "created": "2026-09-14T22:44:17+02:00",
+    "source": "final",
+    "by_branch": {
+      "O1": {
+        "checkpoint": "outputs\\equilibrium_search\\ch-row-apac-us-eu-af\\overnight\\smoke_20260914_overnight\\branches\\O1\\sweep_001.json",
+        "sweep": 1,
+        "max_relative_gain": 0.30092264353513765,
+        "max_gain_player": "row"
+      }
+    },
+    "global": {
+      "branch": "O1",
+      "sweep": 1,
+      "checkpoint": "outputs\\equilibrium_search\\ch-row-apac-us-eu-af\\overnight\\smoke_20260914_overnight\\branches\\O1\\sweep_001.json",
+      "max_relative_gain": 0.30092264353513765,
+      "max_gain_player": "row",
+      "equilibrium_verified": false
+    }
+  },
+  "updated": "2026-09-14T22:44:17+02:00",
+  "periodic_audits": 1,
+  "final_audits": 1,
+  "stress_tested_candidates": 0,
+  "stress_best": {
+    "created": "2026-09-14T22:44:17+02:00",
+    "source": "stress_combined",
+    "by_branch": {},
+    "global": null
+  },
+  "runtime": {
+    "worker_count": 3,
+    "branch_phase_wall_seconds": 1.6383701000013389,
+    "wall_seconds": 80.65038140001707,
+    "summed_task_seconds": 281.9800882998388,
+    "parallel_seconds_saved": 201.32970689982176,
+    "parallel_savings_fraction": 0.7139855445599449
+  },
+  "report": "outputs\\equilibrium_search\\ch-row-apac-us-eu-af\\overnight\\smoke_20260914_overnight\\report.md",
+  "comparison": "outputs\\equilibrium_search\\ch-row-apac-us-eu-af\\overnight\\smoke_20260914_overnight\\comparison.json"
+}

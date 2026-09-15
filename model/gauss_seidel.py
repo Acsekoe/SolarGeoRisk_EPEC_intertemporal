@@ -19,6 +19,7 @@ def solve_gs_intertemporal(
     omega_aggressive_sweeps: int = 3,
     omega_ramp_iters: int = 10,
     tol_rel: float = 1e-4,
+    tol_raw_br: float | None = None,
     stable_iters: int = 3,
     solver: str = "conopt",
     solver_options: Dict[str, float] | None = None,
@@ -56,6 +57,8 @@ def solve_gs_intertemporal(
         raise ValueError("omega_aggressive_sweeps must be >= 0.")
     if tol_rel <= 0.0:
         raise ValueError("tol_rel must be > 0")
+    if tol_raw_br is not None and tol_raw_br <= 0.0:
+        raise ValueError("tol_raw_br must be > 0 when provided")
     if stable_iters < 1:
         raise ValueError("stable_iters must be >= 1")
 
@@ -156,6 +159,30 @@ def solve_gs_intertemporal(
     if _a_var is not None:
         for (r, tp), v in theta_a_bid.items():
             _a_var.l[r, tp] = v
+
+    # When a full lower-market solution is supplied, warm-start the MPEC on
+    # that complementarity branch. Strategic-only starts leave these levels at
+    # zero and can make a local NLP solver return a poorer feasible branch even
+    # though the incumbent upper strategy is already economically preferable.
+    for _name in (
+        "x",
+        "x_dem",
+        "lam",
+        "mu_offer",
+        "gamma",
+        "beta_dem",
+        "psi_dem",
+    ):
+        _var = ctx.vars.get(_name)
+        _records = initial_state.get(_name, {}) if initial_state else {}
+        if _var is None or not isinstance(_records, dict):
+            continue
+        for _key, _value in _records.items():
+            _indices = _key if isinstance(_key, tuple) else (_key,)
+            if len(_indices) == 2:
+                _var.l[_indices[0], _indices[1]] = float(_value)
+            elif len(_indices) == 3:
+                _var.l[_indices[0], _indices[1], _indices[2]] = float(_value)
 
     def _scaled_change(new: float, old: float, scale: float) -> float:
         return abs(new - old) / max(scale, 1e-12)
@@ -273,9 +300,36 @@ def solve_gs_intertemporal(
         frac = min((ramp_it - 1) / (omega_ramp_iters - 1), 1.0)
         return float(omega + frac * (omega_min - omega))
 
+    conv_times = times[:-1] if exclude_terminal_from_convergence and len(times) > 1 else times
+    conv_move_times = (
+        move_times[:-1]
+        if exclude_terminal_from_convergence and len(move_times) > 1
+        else move_times
+    )
+
     for it in range(1, iters + 1):
         r_strat = 0.0
+        r_raw_br = 0.0
+        raw_br_player = ""
+        raw_br_coordinate = ""
+        raw_br_absolute = 0.0
+        solve_failures: List[str] = []
         omega_it = float(omega_current)
+
+        def _consider_raw_br(
+            player: str,
+            coordinate: str,
+            new: float,
+            old: float,
+            scale: float,
+        ) -> None:
+            nonlocal r_raw_br, raw_br_player, raw_br_coordinate, raw_br_absolute
+            relative = _scaled_change(new, old, scale)
+            if relative > r_raw_br:
+                r_raw_br = relative
+                raw_br_player = player
+                raw_br_coordinate = coordinate
+                raw_br_absolute = new - old
 
         # Update penalty annealing
         c_pen_current: Dict[str, float] = {}
@@ -322,7 +376,14 @@ def solve_gs_intertemporal(
             _ss = getattr(ctx.models[p], "solve_status", None)
             _ms = getattr(ctx.models[p], "model_status", None)
             _ss_str = str(_ss).lower().replace(" ", "") if _ss is not None else ""
-            if _ss is not None and "normal" not in _ss_str and "1" != _ss_str:
+            _ms_str = str(_ms).lower().replace(" ", "") if _ms is not None else ""
+            solve_failed = (
+                (_ss is not None and "normal" not in _ss_str and "1" != _ss_str)
+                or "infeasible" in _ms_str
+                or "error" in _ms_str
+            )
+            if solve_failed:
+                solve_failures.append(f"{p}:{_ss}/{_ms}")
                 print(f"  WARNING: solver status for {p} at iter {it}: solve_status={_ss}, model_status={_ms}")
 
             state = _it.extract_state(ctx)
@@ -333,6 +394,59 @@ def solve_gs_intertemporal(
             Kcap_sol = state.get("Kcap", {})
             poffer_sol = state.get("p_offer", {})
             a_bid_sol = state.get("a_bid", {})
+
+            # Measure the solved response before damping at the actual
+            # within-sweep Gauss-Seidel state.  This must be kept separate from
+            # r_strat because the accepted movement scales mechanically with
+            # omega and can therefore look small while the response gap is not.
+            for tp in conv_move_times:
+                key = (p, tp)
+                if key in dK_net_sol:
+                    _consider_raw_br(
+                        p,
+                        f"dK_net[{p},{tp}]",
+                        float(dK_net_sol[key]),
+                        float(theta_dK_net[key]),
+                        _dk_scale(p),
+                    )
+            for tp in conv_times:
+                key = (p, tp)
+                if _it._fix_q_offer_to_kcap(data):
+                    if key in Kcap_sol:
+                        _consider_raw_br(
+                            p,
+                            f"Kcap[{p},{tp}]",
+                            float(Kcap_sol[key]),
+                            float(theta_Kcap[key]),
+                            _q_scale(p),
+                        )
+                elif key in Q_sol:
+                    _consider_raw_br(
+                        p,
+                        f"Q_offer[{p},{tp}]",
+                        float(Q_sol[key]),
+                        float(theta_Q[key]),
+                        _q_scale(p),
+                    )
+                if not fix_a_bid and key in a_bid_sol:
+                    _consider_raw_br(
+                        p,
+                        f"a_bid[{p},{tp}]",
+                        float(a_bid_sol[key]),
+                        float(theta_a_bid[key]),
+                        _it._true_demand_intercept(data, p, tp),
+                    )
+            for im in data.regions:
+                for tp in conv_times:
+                    key = (p, im, tp)
+                    if key in poffer_sol:
+                        _consider_raw_br(
+                            p,
+                            f"p_offer[{p},{im},{tp}]",
+                            float(poffer_sol[key]),
+                            float(theta_p_offer[key]),
+                            _p_scale(p, im),
+                        )
 
             # Update net capacity changes.
             for tp in move_times:
@@ -384,9 +498,6 @@ def solve_gs_intertemporal(
         #  - 2045 is dropped from conv_times (excludes Q_offer, p_offer, a_bid at 2045)
         #  - 2040 is dropped from conv_move_times (excludes dK_net at 2040, i.e. the 2040→2045 transition)
         # Result: convergence only checks 2025-2040 for prices/quantities, 2025-2035 for capacity changes.
-        conv_times = times[:-1] if exclude_terminal_from_convergence and len(times) > 1 else times
-        conv_move_times = move_times[:-1] if exclude_terminal_from_convergence and len(move_times) > 1 else move_times
-
         # Per-variable diagnostics: collect the worst offenders each sweep
         _diag_dk: List[Tuple[str, str, float, float, float]]  = []   # (r, tp, old, new, rel)
         _diag_q:  List[Tuple[str, str, float, float, float]]  = []
@@ -431,7 +542,11 @@ def solve_gs_intertemporal(
         for ex, im, tp, old, new, rel in _diag_p[:5]:
             print(f"    {ex}->{im}/{tp}: {old:.2f} -> {new:.2f}  (rel={rel:.3g})")
 
-        metric_met = r_strat <= tol_rel
+        metric_met = (
+            r_raw_br <= float(tol_raw_br)
+            if tol_raw_br is not None
+            else r_strat <= tol_rel
+        )
 
         stable_count = stable_count + 1 if metric_met else 0
 
@@ -458,6 +573,13 @@ def solve_gs_intertemporal(
         row_data: Dict[str, object] = {
             "iter": it,
             "r_strat": float(r_strat),
+            "r_raw_br": float(r_raw_br),
+            "raw_br_player": raw_br_player,
+            "raw_br_coordinate": raw_br_coordinate,
+            "raw_br_absolute": float(raw_br_absolute),
+            "convergence_metric": "raw_best_response" if tol_raw_br is not None else "damped_step",
+            "all_solves_acceptable": not solve_failures,
+            "solve_failures": "; ".join(solve_failures),
             "c_pen_q": float(c_pen_current["q"]),
             "c_pen_p": float(c_pen_current["p"]),
             "c_pen_a": float(c_pen_current["a"]),
@@ -477,6 +599,9 @@ def solve_gs_intertemporal(
             last_state["_omega_current"]   = float(omega_it)
             last_state["_omega_next"]      = float(omega_next)
             last_state["_omega_reason"]    = omega_reason
+            last_state["_r_raw_br"]        = float(r_raw_br)
+            last_state["_raw_br_player"]   = raw_br_player
+            last_state["_raw_br_coordinate"] = raw_br_coordinate
             last_state["_c_pen_q_current"]  = float(c_pen_current["q"])
             last_state["_c_pen_p_current"]  = float(c_pen_current["p"])
             last_state["_c_pen_a_current"]  = float(c_pen_current["a"])
@@ -486,6 +611,9 @@ def solve_gs_intertemporal(
             last_state.pop("_omega_current",    None)
             last_state.pop("_omega_next",       None)
             last_state.pop("_omega_reason",     None)
+            last_state.pop("_r_raw_br",         None)
+            last_state.pop("_raw_br_player",    None)
+            last_state.pop("_raw_br_coordinate", None)
             last_state.pop("_c_pen_q_current",  None)
             last_state.pop("_c_pen_p_current",  None)
             last_state.pop("_c_pen_a_current",  None)
@@ -493,6 +621,7 @@ def solve_gs_intertemporal(
 
         prev_metrics = {
             "r_strat": float(r_strat),
+            "r_raw_br": float(r_raw_br),
         }
         omega_current = float(omega_next)
 

@@ -1,0 +1,95 @@
+{
+  "created": "2026-09-15T12:13:33+02:00",
+  "run_id": "other_sequences_20260915_114939",
+  "status": "complete_with_selective_refinement",
+  "method": "O6 analogue with sequence-specific source profile and update order",
+  "acceptance_criterion": "one-start frozen-profile zero-proximal maximum relative gain <= 1%, with all six solves successful",
+  "three_start_role": "separate stronger diagnostic; retained but not used for acceptance",
+  "max_sweeps": 300,
+  "audit_interval": 5,
+  "maxiter": 500,
+  "sequences": {
+    "ch-af-apac-eu-row-us": {
+      "equilibrium_number": 1,
+      "order": [
+        "ch",
+        "af",
+        "apac",
+        "eu",
+        "row",
+        "us"
+      ],
+      "source_iteration": 24
+    },
+    "ch-af-eu-us-row-apac": {
+      "equilibrium_number": 2,
+      "order": [
+        "ch",
+        "af",
+        "eu",
+        "us",
+        "row",
+        "apac"
+      ],
+      "source_iteration": 15
+    }
+  },
+  "results": [
+    {
+      "created": "2026-09-15T12:13:35+02:00",
+      "status": "accepted",
+      "sequence": "ch-af-apac-eu-row-us",
+      "equilibrium_number": 1,
+      "player_order": [
+        "ch",
+        "af",
+        "apac",
+        "eu",
+        "row",
+        "us"
+      ],
+      "source_workbook": "outputs\\sens\\converged\\sens_ch-af-apac-eu-row-us.xlsx",
+      "source_iteration": 24,
+      "source_replay_error": 2.220446049250313e-16,
+      "source_one_start_audit": "outputs\\equilibrium_search\\ch-af-apac-eu-row-us\\local_paper_profile_zero_prox\\audit_paper_profile_one_start.json",
+      "source_one_start_max_relative_gain": 4.055045950865043,
+      "branch_F_sweep_006": "outputs\\equilibrium_search\\ch-af-apac-eu-row-us\\local_paper_profile_zero_prox\\branch_F_alpha_0p50\\sweep_006.json",
+      "branch_F_one_start_audit": "outputs\\equilibrium_search\\ch-af-apac-eu-row-us\\local_paper_profile_zero_prox\\branch_F_alpha_0p50\\audit_sweep_006_one_start.json",
+      "branch_F_one_start_max_relative_gain": 0.007969251018844178,
+      "selected_checkpoint": "outputs\\equilibrium_search\\ch-af-apac-eu-row-us\\local_paper_profile_zero_prox\\branch_F_alpha_0p50\\sweep_006.json",
+      "selected_stage": "branch_F",
+      "selected_sweep": 6,
+      "one_start_audit": "outputs\\equilibrium_search\\ch-af-apac-eu-row-us\\local_paper_profile_zero_prox\\branch_F_alpha_0p50\\audit_sweep_006_one_start.json",
+      "one_start_max_relative_gain": 0.007969251018844178,
+      "one_start_max_gain_player": "apac",
+      "one_start_equilibrium_verified": true,
+      "three_start_diagnostic": "outputs\\equilibrium_search\\ch-af-apac-eu-row-us\\local_paper_profile_zero_prox\\branch_F_alpha_0p50\\audit_sweep_006.json",
+      "three_start_max_relative_gain": 0.02572195822772886,
+      "three_start_max_gain_player": "ch",
+      "three_start_equilibrium_verified": false,
+      "criterion": "computational local 1%-equilibrium: one unregularized solve per player from the candidate strategy against one common frozen rival profile",
+      "elapsed_seconds": 0.9869142999996257
+    }
+  ],
+  "updated": "2026-09-15T12:44:19+02:00",
+  "extended_o6_stopped_after_sweep": 30,
+  "stopping_reason": "pure O6 continuation moved away from its best sweep-10 profile; refinement continued in workflow/selective_eq2_20260915_123400_manifest.json",
+  "accepted_packages": [
+    {
+      "sequence": "ch-af-apac-eu-row-us",
+      "package": "outputs\\equilibria\\ch-af-apac-eu-row-us\\branch_f_sweep_006_20260915",
+      "maximum_relative_gain": 0.007969251018844178,
+      "maximum_gain_player": "apac",
+      "three_start_maximum_relative_gain": 0.02572195822772886,
+      "three_start_maximum_gain_player": "ch"
+    },
+    {
+      "sequence": "ch-af-eu-us-row-apac",
+      "package": "outputs\\equilibria\\ch-af-eu-us-row-apac\\o6_s010_selective_s003_20260915",
+      "maximum_relative_gain": 0.009189267569816277,
+      "maximum_gain_player": "ch",
+      "three_start_maximum_relative_gain": 0.04040312766591541,
+      "three_start_maximum_gain_player": "ch"
+    }
+  ]
+}

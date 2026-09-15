@@ -34,6 +34,14 @@ class PlotConfig:
 
 REGION_ORDER = ["ch", "eu", "us", "apac", "af", "row"]
 REGION_LABEL = {"ch": "CH", "eu": "EU", "us": "US", "apac": "APAC", "af": "AF", "row": "ROW"}
+REGION_NAME = {
+    "ch": "China",
+    "eu": "Europe",
+    "us": "United States",
+    "apac": "Asia-Pacific",
+    "af": "Africa",
+    "row": "Rest of World",
+}
 DEST_ORDER = ["unused", *REGION_ORDER]
 
 CHORD_COLORS: Dict[str, str] = {
@@ -145,6 +153,93 @@ def _mid_angle(span: Tuple[float, float]) -> float:
     return 0.5 * (span[0] + span[1])
 
 
+def _spread_label_positions(
+    entries: list[tuple[str, float]],
+    lower: float,
+    upper: float,
+    min_gap: float,
+) -> Dict[str, float]:
+    ordered = sorted(entries, key=lambda entry: entry[1])
+    if not ordered:
+        return {}
+
+    positions = [float(np.clip(raw_y, lower, upper)) for _, raw_y in ordered]
+    for idx in range(1, len(positions)):
+        positions[idx] = max(positions[idx], positions[idx - 1] + min_gap)
+
+    if positions[-1] > upper:
+        positions[-1] = upper
+        for idx in range(len(positions) - 2, -1, -1):
+            positions[idx] = min(positions[idx], positions[idx + 1] - min_gap)
+
+    if positions[0] < lower:
+        shift = lower - positions[0]
+        positions = [value + shift for value in positions]
+
+    return {name: value for (name, _), value in zip(ordered, positions)}
+
+
+def _add_direct_labels(
+    ax: plt.Axes,
+    exp_spans: Dict[str, Tuple[float, float]],
+    dest_spans: Dict[str, Tuple[float, float]],
+) -> None:
+    left_entries = []
+    for region, span in exp_spans.items():
+        if region == "us":
+            continue
+        _, raw_y = _polar_xy(_mid_angle(span), 1.03)
+        left_entries.append((region, raw_y))
+
+    right_entries = []
+    for dest, span in dest_spans.items():
+        if span[1] <= span[0] + 1e-9:
+            continue
+        _, raw_y = _polar_xy(_mid_angle(span), 1.03)
+        right_entries.append((dest, raw_y))
+
+    left_y = _spread_label_positions(left_entries, lower=-1.02, upper=0.98, min_gap=0.24)
+    right_y = _spread_label_positions(right_entries, lower=-1.02, upper=1.08, min_gap=0.24)
+
+    def add_side_labels(
+        spans: Dict[str, Tuple[float, float]],
+        positions: Dict[str, float],
+        side: str,
+    ) -> None:
+        sign = -1.0 if side == "left" else 1.0
+        elbow_x = sign * 1.20
+        line_end_x = sign * 1.43
+        text_x = sign * 1.48
+        ha = "right" if side == "left" else "left"
+
+        for name, label_y in positions.items():
+            anchor_x, anchor_y = _polar_xy(_mid_angle(spans[name]), 1.01)
+            ax.plot(
+                [anchor_x, elbow_x, line_end_x],
+                [anchor_y, label_y, label_y],
+                color="black",
+                lw=0.85,
+                solid_capstyle="round",
+                zorder=5,
+                clip_on=False,
+            )
+            label = "Unused capacity" if name == "unused" else REGION_NAME[name]
+            ax.text(
+                text_x,
+                label_y,
+                label,
+                ha=ha,
+                va="center",
+                fontsize=12.5,
+                color="black",
+                zorder=6,
+                clip_on=False,
+            )
+
+    add_side_labels(exp_spans, left_y, "left")
+    add_side_labels(dest_spans, right_y, "right")
+
+
 def _load_iteration_data(excel_path: str, iteration: int, period: str) -> tuple[pd.Series, pd.DataFrame]:
     detail = pd.read_excel(excel_path, sheet_name="detailed_iters")
     detail["t"] = detail["t"].astype(str)
@@ -177,7 +272,12 @@ def _load_iteration_data(excel_path: str, iteration: int, period: str) -> tuple[
     return cap, flows
 
 
-def _draw_chord_panel(ax: plt.Axes, cap: pd.Series, flows_all: pd.DataFrame) -> None:
+def _draw_chord_panel(
+    ax: plt.Axes,
+    cap: pd.Series,
+    flows_all: pd.DataFrame,
+    direct_labels: bool = False,
+) -> None:
     cap = cap.reindex(REGION_ORDER).fillna(0.0)
     left_exporters = [region for region in REGION_ORDER if float(cap.get(region, 0.0)) > MIN_CAPACITY]
     cap_left = cap.reindex(left_exporters).fillna(0.0)
@@ -303,8 +403,13 @@ def _draw_chord_panel(ax: plt.Axes, cap: pd.Series, flows_all: pd.DataFrame) -> 
     for _, row in flows_unused.iterrows():
         draw_flow(str(row["exp"]), "unused", float(row["x"]))
 
-    ax.set_xlim(-1.18, 1.18)
-    ax.set_ylim(-1.18, 1.08)
+    if direct_labels:
+        _add_direct_labels(ax, exp_spans, dest_spans)
+        ax.set_xlim(-2.10, 2.10)
+        ax.set_ylim(-1.18, 1.34)
+    else:
+        ax.set_xlim(-1.18, 1.18)
+        ax.set_ylim(-1.18, 1.08)
 
 
 def plot_capacity_trade_2x2(cfg: PlotConfig) -> tuple[str, str]:
@@ -418,6 +523,56 @@ def plot_capacity_trade_2x2(cfg: PlotConfig) -> tuple[str, str]:
     return png_path, pdf_path
 
 
+def plot_capacity_trade_2040_labeled(cfg: PlotConfig) -> tuple[str, str]:
+    _assert_excel_exists(cfg.excel_path)
+    os.makedirs(cfg.out_dir, exist_ok=True)
+
+    cap, flows = _load_iteration_data(cfg.excel_path, cfg.iteration, "2040")
+    fig, ax = plt.subplots(figsize=(8.2, 5.0))
+    _draw_chord_panel(ax, cap, flows)
+
+    ax.text(-0.72, 1.22, "Supply", ha="center", va="bottom", fontsize=20, color="0.15")
+    ax.text(0.0, 1.22, "2040", ha="center", va="bottom", fontsize=20, color="0.15")
+    ax.text(0.72, 1.22, "Demand", ha="center", va="bottom", fontsize=20, color="0.15")
+
+    handles = [Patch(facecolor=CHORD_COLORS[r], edgecolor="white", linewidth=0.8) for r in REGION_ORDER]
+    labels = [REGION_LABEL[r] for r in REGION_ORDER]
+    handles.append(
+        Patch(
+            facecolor=CHORD_COLORS["unused"],
+            edgecolor=UNUSED_EDGE_COLOR,
+            linewidth=UNUSED_EDGE_LW,
+            linestyle=UNUSED_EDGE_LS,
+        )
+    )
+    labels.append("UNUSED CAPACITY")
+    legend = fig.legend(
+        handles,
+        labels,
+        loc="lower center",
+        ncol=len(labels),
+        frameon=True,
+        fancybox=True,
+        edgecolor="0.55",
+        bbox_to_anchor=(0.5, 0.01),
+        handlelength=1.8,
+        handletextpad=0.5,
+        columnspacing=1.0,
+        borderpad=0.45,
+        labelspacing=0.35,
+        fontsize=11,
+    )
+    legend.get_frame().set_linewidth(0.9)
+
+    fig.subplots_adjust(left=0.10, right=0.90, top=0.94, bottom=0.17)
+    png_path = os.path.join(cfg.out_dir, "capacity_trade_iter21_2040_labeled.png")
+    pdf_path = os.path.join(cfg.out_dir, "capacity_trade_iter21_2040_labeled.pdf")
+    fig.savefig(png_path, dpi=320, bbox_inches="tight", pad_inches=0.02)
+    fig.savefig(pdf_path, bbox_inches="tight", pad_inches=0.02)
+    plt.close(fig)
+    return png_path, pdf_path
+
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Plot 2x2 iteration-specific trade/capacity chord diagrams.")
     parser.add_argument("--excel-path", default=PlotConfig.excel_path)
@@ -440,6 +595,9 @@ def main() -> None:
     png_path, pdf_path = plot_capacity_trade_2x2(cfg)
     print(f"Saved: {png_path}")
     print(f"Saved: {pdf_path}")
+    labeled_png_path, labeled_pdf_path = plot_capacity_trade_2040_labeled(cfg)
+    print(f"Saved: {labeled_png_path}")
+    print(f"Saved: {labeled_pdf_path}")
 
 
 if __name__ == "__main__":

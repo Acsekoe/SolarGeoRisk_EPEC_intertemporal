@@ -1,0 +1,348 @@
+{
+  "algorithm": {
+    "adaptive_omega": true,
+    "base_year": 2025,
+    "c_pen_a": 0.5,
+    "c_pen_a_final": 2.0,
+    "c_pen_a_mid": 1.0,
+    "c_pen_dk": 0.5,
+    "c_pen_dk_final": 2.0,
+    "c_pen_dk_mid": 1.0,
+    "c_pen_p": 1.0,
+    "c_pen_p_final": 3.0,
+    "c_pen_p_mid": 2.0,
+    "c_pen_q": 0.5,
+    "c_pen_q_final": 2.0,
+    "c_pen_q_mid": 1.0,
+    "c_pen_ramp_iters": 10,
+    "c_quad_a": 0.1,
+    "c_quad_p": 0.1,
+    "c_quad_q": 0.1,
+    "cap_keep_reward": 0.0,
+    "capex_subsidy": 0.0,
+    "decommission_penalty": 0.0,
+    "discount_rate": 0.02,
+    "eps_comp": 0.001,
+    "eps_x": 0.001,
+    "excel_path": "D:\\Alexander\\Studium\\EEG\\Complementarity Modelling\\SolarGeoRisk_EPEC_intertemporal\\outputs\\demand_calibration\\correction_20260915_131409\\input_data_intertemporal_corrected_20260915_131409.xlsx",
+    "exclude_terminal_from_convergence": true,
+    "feastol": 0.0001,
+    "fix_a_bid_to_true_dem": true,
+    "fix_q_offer_to_kcap": true,
+    "force_mu_offer_zero": false,
+    "initial_state_override": "fresh_cost_capacity_zero_change",
+    "iters": 30,
+    "keep_workdir": false,
+    "knitro_algorithm": null,
+    "knitro_hessopt": null,
+    "knitro_maxit": null,
+    "knitro_outlev": null,
+    "method": "gauss_seidel",
+    "omega": 0.8,
+    "omega_aggressive_sweeps": 5,
+    "omega_min": 0.4,
+    "omega_ramp_iters": 10,
+    "opttol": 0.0001,
+    "out_dir": "D:\\Alexander\\Studium\\EEG\\Complementarity Modelling\\SolarGeoRisk_EPEC_intertemporal\\outputs\\demand_calibration\\cold_start_full_20260915_132217\\ch-row-apac-us-eu-af\\results",
+    "params_region_sheet": "params_region_new",
+    "player_order": [
+      "ch",
+      "row",
+      "apac",
+      "us",
+      "eu",
+      "af"
+    ],
+    "plots_dir": "D:\\Alexander\\Studium\\EEG\\Complementarity Modelling\\SolarGeoRisk_EPEC_intertemporal\\outputs\\demand_calibration\\cold_start_full_20260915_132217\\ch-row-apac-us-eu-af\\plots",
+    "solver": "ipopt",
+    "stable_iters": 3,
+    "terminal_capacity_value": 0.0,
+    "tol_raw_br": null,
+    "tol_strat": 0.01,
+    "workdir": null
+  },
+  "classification": "corrected cold-start algorithm-development run; not paper-ready until equilibrium audit",
+  "command": [
+    "C:\\Users\\Alexander\\venvs\\SolarGeoRisk_EPEC\\Scripts\\python.exe",
+    "scripts\\run_corrected_cold_start.py",
+    "--input",
+    "outputs\\demand_calibration\\correction_20260915_131409\\input_data_intertemporal_corrected_20260915_131409.xlsx",
+    "--output-dir",
+    "outputs\\demand_calibration\\cold_start_full_20260915_132217\\ch-row-apac-us-eu-af",
+    "--order",
+    "ch,row,apac,us,eu,af",
+    "--iters",
+    "30",
+    "--log-path",
+    "outputs\\demand_calibration\\cold_start_full_20260915_132217\\logs\\ch-row-apac-us-eu-af.stdout.log"
+  ],
+  "elapsed_seconds": 2114.4050124999994,
+  "end_time": "2026-09-15T13:58:05+02:00",
+  "initialization": {
+    "Q_offer": "existing capacity in every period",
+    "a_bid": "calibrated true-demand intercept",
+    "canonical_state_sha256": "6A2AAE43C9900F51AD07616D52B319868C20B8F1E6ABC9521A07CD98ACD7E977",
+    "dK_net": "zero in every capacity-move period",
+    "method": "fresh_cost_capacity_zero_change",
+    "p_offer": "exporter 2025 manufacturing cost for every importer and period",
+    "source": "constructed only from corrected input primitives; workbook initial_state sheets not read"
+  },
+  "input": {
+    "parameter_sheet": "params_region_new",
+    "path": "D:\\Alexander\\Studium\\EEG\\Complementarity Modelling\\SolarGeoRisk_EPEC_intertemporal\\outputs\\demand_calibration\\correction_20260915_131409\\input_data_intertemporal_corrected_20260915_131409.xlsx",
+    "sha256": "5E3E392B695AB917D8FF445203C9A04F1308083391BBF3C64D35E7ED3C9AD234"
+  },
+  "input_sha256_after_run": "5E3E392B695AB917D8FF445203C9A04F1308083391BBF3C64D35E7ED3C9AD234",
+  "input_unchanged_during_run": true,
+  "loaded_parameters": {
+    "Dmax": {
+      "af": {
+        "2025": 5.0,
+        "2030": 10.0,
+        "2035": 14.0,
+        "2040": 20.0,
+        "2045": 20.0
+      },
+      "apac": {
+        "2025": 50.0,
+        "2030": 85.0,
+        "2035": 103.0,
+        "2040": 126.0,
+        "2045": 126.0
+      },
+      "ch": {
+        "2025": 280.0,
+        "2030": 350.0,
+        "2035": 333.0,
+        "2040": 316.0,
+        "2045": 316.0
+      },
+      "eu": {
+        "2025": 75.0,
+        "2030": 90.0,
+        "2035": 95.0,
+        "2040": 99.0,
+        "2045": 99.0
+      },
+      "row": {
+        "2025": 45.0,
+        "2030": 70.0,
+        "2035": 79.0,
+        "2040": 89.0,
+        "2045": 89.0
+      },
+      "us": {
+        "2025": 45.0,
+        "2030": 65.0,
+        "2035": 70.0,
+        "2040": 75.0,
+        "2045": 75.0
+      }
+    },
+    "a_dem": {
+      "af": {
+        "2025": 2397.3777777777777,
+        "2030": 2397.3777777777777,
+        "2035": 2397.3777777777777,
+        "2040": 2397.3777777777777,
+        "2045": 2397.3777777777777
+      },
+      "apac": {
+        "2025": 1127.628888888889,
+        "2030": 1127.628888888889,
+        "2035": 1127.628888888889,
+        "2040": 1127.628888888889,
+        "2045": 1127.628888888889
+      },
+      "ch": {
+        "2025": 1100.7755555555555,
+        "2030": 1100.7755555555555,
+        "2035": 1100.7755555555555,
+        "2040": 1100.7755555555555,
+        "2045": 1100.7755555555555
+      },
+      "eu": {
+        "2025": 2042.8166666666666,
+        "2030": 2042.8166666666666,
+        "2035": 2042.8166666666666,
+        "2040": 2042.8166666666666,
+        "2045": 2042.8166666666666
+      },
+      "row": {
+        "2025": 2046.7644444444445,
+        "2030": 2046.7644444444445,
+        "2035": 2046.7644444444445,
+        "2040": 2046.7644444444445,
+        "2045": 2046.7644444444445
+      },
+      "us": {
+        "2025": 1184.4811111111112,
+        "2030": 1184.4811111111112,
+        "2035": 1184.4811111111112,
+        "2040": 1184.4811111111112,
+        "2045": 1184.4811111111112
+      }
+    },
+    "b_dem": {
+      "af": {
+        "2025": 252.35555555555553,
+        "2030": 126.17777777777776,
+        "2035": 90.12698412698413,
+        "2040": 63.08888888888888,
+        "2045": 63.08888888888888
+      },
+      "apac": {
+        "2025": 11.869777777777777,
+        "2030": 6.982222222222222,
+        "2035": 5.76202804746494,
+        "2040": 4.7102292768959435,
+        "2045": 4.7102292768959435
+      },
+      "ch": {
+        "2025": 2.069126984126984,
+        "2030": 1.6553015873015873,
+        "2035": 1.7398064731398064,
+        "2040": 1.833403656821378,
+        "2045": 1.833403656821378
+      },
+      "eu": {
+        "2025": 14.335555555555555,
+        "2030": 11.946296296296296,
+        "2035": 11.317543859649122,
+        "2040": 10.86026936026936,
+        "2045": 10.86026936026936
+      },
+      "row": {
+        "2025": 23.938765432098766,
+        "2030": 15.389206349206349,
+        "2035": 13.636005625879042,
+        "2040": 12.103870162297127,
+        "2045": 12.103870162297127
+      },
+      "us": {
+        "2025": 13.853580246913582,
+        "2030": 9.590940170940172,
+        "2035": 8.905873015873016,
+        "2040": 8.312148148148149,
+        "2045": 8.312148148148149
+      }
+    },
+    "periods": [
+      "2025",
+      "2030",
+      "2035",
+      "2040",
+      "2045"
+    ],
+    "regions": [
+      "ch",
+      "eu",
+      "us",
+      "apac",
+      "af",
+      "row"
+    ],
+    "terminal_2045": "inherits 2040 Dmax, a_dem, and b_dem",
+    "validation": "passed in model.data_prep.load_data_from_excel before model construction"
+  },
+  "log_path": "D:\\Alexander\\Studium\\EEG\\Complementarity Modelling\\SolarGeoRisk_EPEC_intertemporal\\outputs\\demand_calibration\\cold_start_full_20260915_132217\\logs\\ch-row-apac-us-eu-af.stdout.log",
+  "output_dir": "D:\\Alexander\\Studium\\EEG\\Complementarity Modelling\\SolarGeoRisk_EPEC_intertemporal\\outputs\\demand_calibration\\cold_start_full_20260915_132217\\ch-row-apac-us-eu-af",
+  "pid": 28948,
+  "player_order": [
+    "ch",
+    "row",
+    "apac",
+    "us",
+    "eu",
+    "af"
+  ],
+  "result": {
+    "loaded_parameter_check": {
+      "a_differences": {
+        "af|2025": 4.547473508864641e-13,
+        "af|2030": 4.547473508864641e-13,
+        "af|2035": 4.547473508864641e-13,
+        "af|2040": 4.547473508864641e-13,
+        "af|2045": 4.547473508864641e-13,
+        "apac|2025": 0.0,
+        "apac|2030": 0.0,
+        "apac|2035": 0.0,
+        "apac|2040": 0.0,
+        "apac|2045": 0.0,
+        "ch|2025": 4.547473508864641e-13,
+        "ch|2030": 4.547473508864641e-13,
+        "ch|2035": 4.547473508864641e-13,
+        "ch|2040": 4.547473508864641e-13,
+        "ch|2045": 4.547473508864641e-13,
+        "eu|2025": 4.547473508864641e-13,
+        "eu|2030": 4.547473508864641e-13,
+        "eu|2035": 4.547473508864641e-13,
+        "eu|2040": 4.547473508864641e-13,
+        "eu|2045": 4.547473508864641e-13,
+        "row|2025": 4.547473508864641e-13,
+        "row|2030": 4.547473508864641e-13,
+        "row|2035": 4.547473508864641e-13,
+        "row|2040": 4.547473508864641e-13,
+        "row|2045": 4.547473508864641e-13,
+        "us|2025": 2.2737367544323206e-13,
+        "us|2030": 2.2737367544323206e-13,
+        "us|2035": 2.2737367544323206e-13,
+        "us|2040": 2.2737367544323206e-13,
+        "us|2045": 2.2737367544323206e-13
+      },
+      "absolute_tolerance": 1e-09,
+      "b_differences": {
+        "af|2025": 2.842170943040401e-14,
+        "af|2030": 4.263256414560601e-14,
+        "af|2035": 0.0,
+        "af|2040": 0.0,
+        "af|2045": 0.0,
+        "apac|2025": 3.552713678800501e-15,
+        "apac|2030": 0.0,
+        "apac|2035": 0.0,
+        "apac|2040": 8.881784197001252e-16,
+        "apac|2045": 8.881784197001252e-16,
+        "ch|2025": 0.0,
+        "ch|2030": 2.220446049250313e-16,
+        "ch|2035": 4.440892098500626e-16,
+        "ch|2040": 0.0,
+        "ch|2045": 0.0,
+        "eu|2025": 5.329070518200751e-15,
+        "eu|2030": 3.552713678800501e-15,
+        "eu|2035": 1.7763568394002505e-15,
+        "eu|2040": 0.0,
+        "eu|2045": 0.0,
+        "row|2025": 3.552713678800501e-15,
+        "row|2030": 1.7763568394002505e-15,
+        "row|2035": 1.7763568394002505e-15,
+        "row|2040": 1.7763568394002505e-15,
+        "row|2045": 1.7763568394002505e-15,
+        "us|2025": 1.7763568394002505e-15,
+        "us|2030": 0.0,
+        "us|2035": 0.0,
+        "us|2040": 0.0,
+        "us|2045": 0.0
+      },
+      "max_abs_a_difference": 4.547473508864641e-13,
+      "max_abs_b_difference": 4.263256414560601e-14,
+      "verified": true
+    },
+    "path": "D:\\Alexander\\Studium\\EEG\\Complementarity Modelling\\SolarGeoRisk_EPEC_intertemporal\\outputs\\demand_calibration\\cold_start_full_20260915_132217\\ch-row-apac-us-eu-af\\results\\results_20260915_132251_8d07a2.xlsx",
+    "sha256": "1D6021FEB6C4A91F7C09ECD70AAAD775D62AAFAEBBFA67D8B39160B51A18BD0B"
+  },
+  "software": {
+    "code_sha256": {
+      "model/data_prep.py": "A9E51B8E8557FB9A31F61478C1551AE654E79882B8E8E90083EDB44C65598749",
+      "model/gauss_seidel.py": "01F035E80B0EFD7DD98369609460634EE1BB6FD97CB692C31A6D4D6695076339",
+      "model/model_main.py": "219AA83609B453A588B770BD996870D22C07D4626D069B67216003DA10F3D388",
+      "model/results_writer.py": "56D7661247B4746F63B746574B2910EBFD10518012AC24F039367CAC2BF6B721",
+      "model/run_gs.py": "82F6846EB53058D34109A61653C7F49DC2F934AEE13BC33481EB2A0762674B0E"
+    },
+    "gamspy": "1.21.0",
+    "git_head": "c96f53ef3e544d55caa4b5b7d4197b1733c66aa8",
+    "git_status_porcelain": "M .claude/worktrees/wizardly-golick\n M .vscode/settings.json\n M \"IEEE Paper\"\n M model/__pycache__/__init__.cpython-313.pyc\n M model/__pycache__/data_prep.cpython-313.pyc\n M model/__pycache__/gauss_seidel.cpython-313.pyc\n M model/__pycache__/model_main.cpython-313.pyc\n M model/__pycache__/plot_results.cpython-313.pyc\n M model/__pycache__/results_writer.cpython-313.pyc\n M model/__pycache__/run_gs.cpython-313.pyc\n M model/data_prep.py\n M model/gauss_seidel.py\n M model/run_gs.py\n M plots/__pycache__/plot_welfare.cpython-313.pyc\n M plots/plot_capacity_epec_demand.py\n M plots/plot_iter21_capacity_chords.py\n M plots/plot_prices.py\n M plots/plot_welfare.py\n?? AGENTS.md\n?? notes/\n?? outputs/continuation/\n?? outputs/demand_calibration/\n?? outputs/equilibria/\n?? outputs/equilibrium_homotopy/\n?? outputs/equilibrium_search/\n?? outputs/figures/capacity_trade_iter21_2040_labeled.pdf\n?? outputs/figures/capacity_trade_iter21_2040_labeled.png\n?? outputs/figures/capacity_trade_iter21_2x2.pdf\n?? outputs/verification/\n?? scripts/audit_selected_equilibrium.py\n?? scripts/continue_selected_equilibrium.py\n?? scripts/export_certified_equilibrium_results.py\n?? scripts/nested_market_audit.py\n?? scripts/package_o6_sweep15_equilibrium.py\n?? scripts/package_other_sequence_equilibria.py\n?? scripts/refine_other_sequence_candidate.py\n?? scripts/report_certified_candidate.py\n?? scripts/report_local_paper_equilibrium_experiment.py\n?? scripts/run_corrected_cold_start.py\n?? scripts/run_local_paper_equilibrium_experiment.py\n?? scripts/run_objective_equilibrium_search.py\n?? scripts/run_other_sequence_o6_search.py\n?? scripts/run_overnight_equilibrium_experiment.py\n?? scripts/search_equilibrium_homotopy.py\n?? scripts/search_nested_equilibrium.py\n?? scripts/search_zero_prox_equilibrium.py\n?? scripts/verify_nested_undamped_sweep.py\n?? scripts/verify_undamped_equilibrium.py\n?? tmp/\n?? workflow/",
+    "python": "3.13.7 (tags/v3.13.7:bcee1c3, Aug 14 2025, 14:15:11) [MSC v.1944 64 bit (AMD64)]"
+  },
+  "start_time": "2026-09-15T13:22:51+02:00",
+  "status": "complete"
+}

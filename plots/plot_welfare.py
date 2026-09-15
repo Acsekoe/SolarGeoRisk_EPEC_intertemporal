@@ -9,6 +9,7 @@ period-by-period welfare change. It intentionally has no plot titles so the
 caption can carry the narrative in the paper.
 """
 
+import argparse
 import os
 import sys
 import contextlib
@@ -39,14 +40,23 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.normpath(os.path.join(SCRIPT_DIR, ".."))
 INPUT_PATH = os.path.join(ROOT_DIR, "inputs", "input_data_intertemporal.xlsx")
 PLANNER_PATH = os.path.join(ROOT_DIR, "outputs", "llp_planner_results.xlsx")
-EPEC_PATH = os.path.join(
+DEFAULT_EPEC_PATH = os.path.join(
     ROOT_DIR,
     "outputs",
     "sens",
     "converged",
     "sens_ch-row-apac-us-eu-af.xlsx",
 )
-OUT_DIR = os.path.join(SCRIPT_DIR, "..", "outputs", "figures")
+DEFAULT_OUT_DIR = os.path.join(SCRIPT_DIR, "..", "outputs", "figures")
+
+parser = argparse.ArgumentParser(description="Plot planner and EPEC regional welfare.")
+parser.add_argument("--epec-path", default=DEFAULT_EPEC_PATH)
+parser.add_argument("--output-dir", default=DEFAULT_OUT_DIR)
+parser.add_argument("--output-suffix", default="")
+args = parser.parse_args()
+
+EPEC_PATH = os.path.abspath(args.epec_path)
+OUT_DIR = os.path.abspath(args.output_dir)
 os.makedirs(OUT_DIR, exist_ok=True)
 
 SELECTED_RUN = "sens_ch-row-apac-us-eu-af"
@@ -365,8 +375,8 @@ cbar.ax.tick_params(labelsize=9)
 
 fig.subplots_adjust(left=0.12, right=0.96, top=0.96, bottom=0.22, wspace=0.16)
 
-out_png = os.path.join(OUT_DIR, "welfare_epec_vs_planner.png")
-out_pdf = os.path.join(OUT_DIR, "welfare_epec_vs_planner.pdf")
+out_png = os.path.join(OUT_DIR, f"welfare_epec_vs_planner{args.output_suffix}.png")
+out_pdf = os.path.join(OUT_DIR, f"welfare_epec_vs_planner{args.output_suffix}.pdf")
 fig.savefig(out_png, dpi=180, bbox_inches="tight")
 fig.savefig(out_pdf, bbox_inches="tight")
 print(f"Saved to {out_png}")
@@ -458,8 +468,12 @@ stack_limit = max(abs(negative_base.min()), abs(positive_base.max())) * 1.12
 ax_stack.set_xlim(-stack_limit, stack_limit)
 fig_stack.subplots_adjust(left=0.23, right=0.96, top=0.96, bottom=0.36)
 
-out_stack_png = os.path.join(OUT_DIR, "welfare_epec_vs_planner_stacked_annual_v2.png")
-out_stack_pdf = os.path.join(OUT_DIR, "welfare_epec_vs_planner_stacked_annual_v2.pdf")
+out_stack_png = os.path.join(
+    OUT_DIR, f"welfare_epec_vs_planner_stacked_annual_v2{args.output_suffix}.png"
+)
+out_stack_pdf = os.path.join(
+    OUT_DIR, f"welfare_epec_vs_planner_stacked_annual_v2{args.output_suffix}.pdf"
+)
 fig_stack.savefig(out_stack_png, dpi=180, bbox_inches="tight")
 fig_stack.savefig(out_stack_pdf, bbox_inches="tight")
 print(f"Saved to {out_stack_png}")

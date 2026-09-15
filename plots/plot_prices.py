@@ -5,6 +5,7 @@ Market prices (lam) and marginal cost (c_man_var) per region over 2025-2040,
 comparing the LLP planner benchmark vs the selected EPEC run (ch-row-apac-us-eu-af).
 """
 
+import argparse
 import os
 import pandas as pd
 import matplotlib
@@ -20,9 +21,18 @@ plt.rcParams.update({
 })
 
 SCRIPT_DIR   = os.path.dirname(os.path.abspath(__file__))
+DEFAULT_EPEC_PATH = os.path.join(SCRIPT_DIR, "..", "outputs", "sens", "converged", "sens_ch-row-apac-us-eu-af.xlsx")
+DEFAULT_OUT_DIR = os.path.join(SCRIPT_DIR, "..", "outputs", "figures")
+
+parser = argparse.ArgumentParser(description="Plot planner and EPEC market prices.")
+parser.add_argument("--epec-path", default=DEFAULT_EPEC_PATH)
+parser.add_argument("--output-dir", default=DEFAULT_OUT_DIR)
+parser.add_argument("--output-suffix", default="")
+args = parser.parse_args()
+
 PLANNER_PATH = os.path.join(SCRIPT_DIR, "..", "outputs", "llp_planner_results.xlsx")
-EPEC_PATH    = os.path.join(SCRIPT_DIR, "..", "outputs", "sens", "converged", "sens_ch-row-apac-us-eu-af.xlsx")
-OUT_DIR      = os.path.join(SCRIPT_DIR, "..", "outputs", "figures")
+EPEC_PATH    = os.path.abspath(args.epec_path)
+OUT_DIR      = os.path.abspath(args.output_dir)
 os.makedirs(OUT_DIR, exist_ok=True)
 
 PERIODS      = ["2025", "2030", "2035", "2040"]
@@ -85,8 +95,8 @@ fig.legend(handles, labels, loc="lower center", ncol=1, fontsize=15,
 
 fig.subplots_adjust(left=0.13, right=0.98, top=0.95, bottom=0.17,
                     wspace=0.34, hspace=0.50)
-out_path = os.path.join(OUT_DIR, "prices_planner_vs_epec_v3.png")
-out_pdf = os.path.join(OUT_DIR, "prices_planner_vs_epec_v3.pdf")
+out_path = os.path.join(OUT_DIR, f"prices_planner_vs_epec_v3{args.output_suffix}.png")
+out_pdf = os.path.join(OUT_DIR, f"prices_planner_vs_epec_v3{args.output_suffix}.pdf")
 plt.savefig(out_path, dpi=300, bbox_inches="tight")
 plt.savefig(out_pdf, bbox_inches="tight")
 print(f"Saved to {out_path}")

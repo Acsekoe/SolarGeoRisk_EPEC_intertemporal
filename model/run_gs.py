@@ -62,6 +62,9 @@ class RunConfig:
     omega_aggressive_sweeps: int = 5
     omega_ramp_iters: int = 10
     tol_strat: float = 1e-2
+    # Optional stopping tolerance on the response before damping.  Existing
+    # callers retain the historical damped-step rule when this is None.
+    tol_raw_br: float | None = None
     stable_iters: int = 3
     eps_x: float = 1e-3
     eps_comp: float = 1e-3
@@ -397,6 +400,7 @@ def _append_detailed_iter_rows(
     state: dict[str, dict],
     it: int,
     r_strat: float,
+    r_raw_br: float | None,
     stable_count: int,
     rows: list[dict[str, object]],
 ) -> None:
@@ -426,6 +430,7 @@ def _append_detailed_iter_rows(
                 "t": t,
                 "stable_count": stable_count,
                 "r_strat": r_strat,
+                "r_raw_br": r_raw_br,
                 "Kcap": _safe_float(kcap_map.get((r, t), (data.Kcap_2025 or data.Qcap).get(r, 0.0))),
                 "net_cap_change": _safe_float(dk_map.get((r, t), 0.0)),
                 "Q_offer": _safe_float(q_map.get((r, t))),
@@ -491,14 +496,18 @@ def run(cfg: RunConfig) -> str:
     print(f"[CONFIG] Model type: Offer Model EPEC")
     print(f"[CONFIG] Method: {method}")
     print(f"[CONFIG] Solver: {solver}  feastol={feastol:g}  opttol={opttol:g}")
-    print(f"[CONFIG] iters={iters} omega={omega:g} tol_rel={tol_rel:g} stable_iters={stable_iters}")
+    print(
+        f"[CONFIG] iters={iters} omega={omega:g} tol_rel={tol_rel:g} "
+        f"tol_raw_br={cfg.tol_raw_br} stable_iters={stable_iters}"
+    )
     print(
         f"[CONFIG] adaptive_omega={cfg.adaptive_omega} "
         f"omega_min={cfg.omega_min:g} omega_aggressive_sweeps={cfg.omega_aggressive_sweeps} "
         f"omega_ramp_iters={cfg.omega_ramp_iters}"
     )
     print(f"[CONFIG] eps_x={float(data.eps_x):g} eps_comp={float(data.eps_comp):g}")
-    print(f"[CONFIG] convergence_metric=relative_strategy_change")
+    convergence_metric = "raw_best_response" if cfg.tol_raw_br is not None else "relative_strategy_change"
+    print(f"[CONFIG] convergence_metric={convergence_metric}")
     effective_order = cfg.player_order if cfg.player_order is not None else PLAYER_ORDER
     print(f"[CONFIG] player_order={effective_order}")
     print(f"[CONFIG] workdir={workdir}{' (keep)' if cfg.keep_workdir else ' (auto-cleanup)'}")
@@ -517,8 +526,12 @@ def run(cfg: RunConfig) -> str:
         c_pen_p_cur     = state.get("_c_pen_p_current", float("nan"))
         c_pen_a_cur     = state.get("_c_pen_a_current", float("nan"))
         c_pen_dk_cur    = state.get("_c_pen_dk_current", float("nan"))
+        r_raw_br        = state.get("_r_raw_br", float("nan"))
+        raw_br_player   = state.get("_raw_br_player", "")
+        raw_br_coord    = state.get("_raw_br_coordinate", "")
         print(
             f"[ITER {it}] r_strat={r_strat:.4g}"
+            f"  r_raw_br={r_raw_br:.4g} ({raw_br_player}: {raw_br_coord})"
             f"  omega={omega_cur:.3g}->{omega_next:.3g}"
             f"  c_pen=(q={c_pen_q_cur:.3g}, p={c_pen_p_cur:.3g}, a={c_pen_a_cur:.3g}, dk={c_pen_dk_cur:.3g})"
             f"  stable={stable_count}  t={sweep_elapsed:.2f}s",
@@ -535,6 +548,7 @@ def run(cfg: RunConfig) -> str:
             state=state,
             it=it,
             r_strat=r_strat,
+            r_raw_br=None if r_raw_br != r_raw_br else float(r_raw_br),
             stable_count=stable_count,
             rows=detailed_iter_rows,
         )
@@ -570,6 +584,7 @@ def run(cfg: RunConfig) -> str:
             omega_aggressive_sweeps=cfg.omega_aggressive_sweeps,
             omega_ramp_iters=cfg.omega_ramp_iters,
             tol_rel=cfg.tol_strat,
+            tol_raw_br=cfg.tol_raw_br,
             stable_iters=stable_iters,
             working_directory=workdir,
             iter_callback=_iter_log,
@@ -608,8 +623,12 @@ def run(cfg: RunConfig) -> str:
                 "omega_aggressive_sweeps": int(cfg.omega_aggressive_sweeps),
                 "omega_ramp_iters":      int(cfg.omega_ramp_iters),
                 "tol_rel":               tol_rel,
+                "tol_raw_br":            cfg.tol_raw_br,
                 "stable_iters":          stable_iters,
-                "convergence_metric":     "relative_strategy_change",
+                "convergence_metric":     (
+                    "raw_best_response" if cfg.tol_raw_br is not None
+                    else "relative_strategy_change"
+                ),
                 # --- Solver ---
                 "solver":                solver,
                 "feastol":               feastol,

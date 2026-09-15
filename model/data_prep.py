@@ -188,6 +188,7 @@ def _get_setting_bool(settings: Dict[str, object], key: str, default: bool) -> b
 # ---------------------------------------------------------------------------
 _TIMES = ["2025", "2030", "2035", "2040", "2045"]
 _FUTURE_FALLBACK_YEAR = "2040"
+_DEMAND_CALIBRATION_ABS_TOL = 1e-9
 
 # Map clean year label → possible column names in the Excel sheet
 _DMAX_COL_CANDIDATES = {
@@ -205,6 +206,31 @@ def _find_col(df: pd.DataFrame, candidates: List[str]) -> str | None:
         if c in df.columns:
             return c
     return None
+
+
+def _expected_demand_coefficients(
+    p_full: float,
+    eps_abs: float,
+    dmax: float,
+) -> Tuple[float, float]:
+    """Return the documented linear-demand intercept and slope.
+
+    The input workbook defines ``eps_abs`` as the absolute elasticity, so it
+    must be strictly positive.  ``dmax`` is the full-demand quantity in GW.
+    """
+    p_full_f = float(p_full)
+    eps_abs_f = float(eps_abs)
+    dmax_f = float(dmax)
+    if p_full_f <= 0.0:
+        raise ValueError(f"p_full must be > 0. Got: {p_full_f}")
+    if eps_abs_f <= 0.0:
+        raise ValueError(f"eps_abs_base must be > 0. Got: {eps_abs_f}")
+    if dmax_f <= 0.0:
+        raise ValueError(f"Dmax must be > 0. Got: {dmax_f}")
+    return (
+        p_full_f * (1.0 + 1.0 / eps_abs_f),
+        p_full_f / (eps_abs_f * dmax_f),
+    )
 
 
 def load_data_from_excel(path: str, params_region_sheet: str = "params_region") -> ModelData:
@@ -503,6 +529,14 @@ def load_data_from_excel(path: str, params_region_sheet: str = "params_region") 
         a_dem_t_impl = {}
         b_dem_t_impl = {}
 
+        p_full_col = _find_col(df_params, ["p_full", "p_full (USD/kW)"])
+        eps_abs_col = _find_col(df_params, ["eps_abs_base", "eps_abs_base (scalar)"])
+        if p_full_col is None or eps_abs_col is None:
+            raise ValueError(
+                f"Sheet '{params_region_sheet}' must provide p_full and eps_abs_base "
+                "to calibrate and validate time-indexed demand."
+            )
+
         a_cols_by_tp = {
             tp: _find_col(df_params, [f"a_dem_{tp}", f"a_dem_{tp} (USD/kW)"])
             for tp in _TIMES
@@ -513,11 +547,24 @@ def load_data_from_excel(path: str, params_region_sheet: str = "params_region") 
         }
         a_col_2040 = a_cols_by_tp.get(_FUTURE_FALLBACK_YEAR)
         b_col_2040 = b_cols_by_tp.get(_FUTURE_FALLBACK_YEAR)
+        calibration_errors: List[str] = []
         
         for tp in _TIMES:
             a_vals, b_vals = [], []
             for r in regions:
                 dmax_val = Dmax_t[(r, tp)]
+                p_full_raw = row_map[r].get(p_full_col, float("nan"))
+                eps_abs_raw = row_map[r].get(eps_abs_col, float("nan"))
+                if pd.isna(p_full_raw) or pd.isna(eps_abs_raw):
+                    raise ValueError(
+                        f"Sheet '{params_region_sheet}' has missing p_full or eps_abs_base "
+                        f"for region '{r}'."
+                    )
+                expected_a, expected_b = _expected_demand_coefficients(
+                    float(p_full_raw),
+                    float(eps_abs_raw),
+                    dmax_val,
+                )
                 
                 # Look for explicit year columns first.
                 a_col = a_cols_by_tp.get(tp)
@@ -536,16 +583,21 @@ def load_data_from_excel(path: str, params_region_sheet: str = "params_region") 
 
                 if not pd.isna(a_val_raw):
                     a_val = float(a_val_raw)
+                    if abs(a_val - expected_a) > _DEMAND_CALIBRATION_ABS_TOL:
+                        calibration_errors.append(
+                            f"a_dem[{r},{tp}]={a_val:.17g}, expected {expected_a:.17g}"
+                        )
                 else:
-                    a_val = float(a_dem.get(r, 500.0))
-                    if pd.isna(a_val):
-                        a_val = 500.0
+                    a_val = expected_a
 
                 if not pd.isna(b_val_raw):
                     b_val = float(b_val_raw)
+                    if abs(b_val - expected_b) > _DEMAND_CALIBRATION_ABS_TOL:
+                        calibration_errors.append(
+                            f"b_dem[{r},{tp}]={b_val:.17g}, expected {expected_b:.17g}"
+                        )
                 else:
-                    # Fallback to horizontal stretching if b_dem_t isn't explicitly provided
-                    b_val = a_val / max(dmax_val, 1e-9)
+                    b_val = expected_b
                 
                 a_dem_t_impl[(r, tp)] = a_val
                 b_dem_t_impl[(r, tp)] = b_val
@@ -555,6 +607,16 @@ def load_data_from_excel(path: str, params_region_sheet: str = "params_region") 
             if a_vals:
                 print(f"[DEMAND CAL] t={tp}: a min/mean/max = {min(a_vals):.2f}/{sum(a_vals)/len(a_vals):.2f}/{max(a_vals):.2f} "
                       f"b min/mean/max = {min(b_vals):.4f}/{sum(b_vals)/len(b_vals):.4f}/{max(b_vals):.4f}")
+
+        if calibration_errors:
+            details = "\n  - ".join(calibration_errors)
+            raise ValueError(
+                "Demand calibration mismatch in sheet "
+                f"'{params_region_sheet}'. Explicit coefficients must satisfy "
+                "a_dem = p_full * (1 + 1 / eps_abs_base) and "
+                "b_dem = p_full / (eps_abs_base * Dmax) with absolute tolerance "
+                f"{_DEMAND_CALIBRATION_ABS_TOL:g}.\n  - {details}"
+            )
 
     # --- NPV discount factors and period lengths ---
     years_to_next: Dict[str, float] = {tp: 5.0 for tp in _TIMES}
