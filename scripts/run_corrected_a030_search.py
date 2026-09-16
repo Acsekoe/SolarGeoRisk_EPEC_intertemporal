@@ -141,6 +141,9 @@ def run_branch(task: dict[str, Any]) -> dict[str, Any]:
     branch_root = Path(task["output_root"]).resolve() / sequence / branch
     status_path = branch_root / "status.json"
     alpha = float(task["alpha"])
+    update_gain_threshold = task.get("update_gain_threshold")
+    if update_gain_threshold is not None:
+        update_gain_threshold = float(update_gain_threshold)
     try:
         branch_root.mkdir(parents=True, exist_ok=True)
         write_json(
@@ -152,6 +155,7 @@ def run_branch(task: dict[str, Any]) -> dict[str, Any]:
                 "sequence": sequence,
                 "branch": branch,
                 "alpha": alpha,
+                "update_gain_threshold": update_gain_threshold,
             },
         )
         data, source, replay_error, workbook, _ = configure_modules(task)
@@ -264,7 +268,12 @@ def run_branch(task: dict[str, Any]) -> dict[str, Any]:
                         )
                     gain = max(float(best_value) - reference, 0.0) / max(abs(reference), 1.0)
                     raw_move = float(_strategy_distance(data, before_player, response, player)[0])
-                    update_player(data, state, response, player, alpha)
+                    effective_weight = (
+                        alpha
+                        if update_gain_threshold is None or gain > update_gain_threshold
+                        else 0.0
+                    )
+                    update_player(data, state, response, player, effective_weight)
                     player_rows.append(
                         {
                             "player": player,
@@ -272,7 +281,10 @@ def run_branch(task: dict[str, Any]) -> dict[str, Any]:
                             "best_response_objective": float(best_value),
                             "relative_gain": gain,
                             "raw_strategy_move": raw_move,
-                            "damping_weight": alpha,
+                            "nominal_damping_weight": alpha,
+                            "damping_weight": effective_weight,
+                            "update_applied": bool(effective_weight > 0.0),
+                            "update_gain_threshold": update_gain_threshold,
                             "move_cap": None,
                             "applied_strategy_move": float(
                                 _strategy_distance(data, before_player, state, player)[0]
@@ -299,11 +311,18 @@ def run_branch(task: dict[str, Any]) -> dict[str, Any]:
                         "player_order": order,
                         "alpha": alpha,
                         "minimum_allowed_alpha": MIN_ALPHA,
+                        "update_gain_threshold": update_gain_threshold,
+                        "players_at_or_below_gain_threshold_are_frozen": (
+                            update_gain_threshold is not None
+                        ),
                         "move_cap": None,
                         "source_workbook": relative(workbook),
                         "algorithmic_proximal_penalties": 0.0,
                         "multistart_used": False,
                         "players": player_rows,
+                        "updated_players": [
+                            row["player"] for row in player_rows if row["update_applied"]
+                        ],
                         "max_sequential_relative_gain": max(
                             row["relative_gain"] for row in player_rows
                         ),
@@ -348,6 +367,7 @@ def run_branch(task: dict[str, Any]) -> dict[str, Any]:
                         "branch": branch,
                         "sweep": sweep,
                         "alpha": alpha,
+                        "update_gain_threshold": update_gain_threshold,
                         "latest_one_start_max_relative_gain": current["max_relative_gain"],
                         "latest_all_six_solves_successful": current[
                             "all_six_solves_successful"
@@ -377,6 +397,10 @@ def run_branch(task: dict[str, Any]) -> dict[str, Any]:
             "source_replay_error": replay_error,
             "alpha": alpha,
             "minimum_allowed_alpha": MIN_ALPHA,
+            "update_gain_threshold": update_gain_threshold,
+            "players_at_or_below_gain_threshold_are_frozen": (
+                update_gain_threshold is not None
+            ),
             "move_cap": None,
             "algorithmic_proximal_penalties": 0.0,
             "multistart_used": False,
@@ -401,6 +425,7 @@ def run_branch(task: dict[str, Any]) -> dict[str, Any]:
             "sequence": sequence,
             "branch": branch,
             "alpha": alpha,
+            "update_gain_threshold": update_gain_threshold,
             "error": f"{type(exc).__name__}: {exc}",
             "traceback": traceback.format_exc(),
             "elapsed_seconds": time.perf_counter() - started,
@@ -442,12 +467,20 @@ def main() -> None:
     parser.add_argument("--maxiter", type=int, default=600)
     parser.add_argument("--max-sweeps", type=int, default=60)
     parser.add_argument("--alpha", type=float, default=MIN_ALPHA)
+    parser.add_argument(
+        "--update-gain-threshold",
+        type=float,
+        default=None,
+        help="Apply a player's update only when its sequential relative gain exceeds this threshold.",
+    )
     parser.add_argument("--validate-only", action="store_true")
     args = parser.parse_args()
     if args.workers < 1 or args.maxiter < 1 or args.max_sweeps < 1:
         raise ValueError("workers, maxiter, and max-sweeps must be positive")
     if not MIN_ALPHA <= args.alpha <= 1.0:
         raise ValueError(f"alpha must be between the allowed floor {MIN_ALPHA:.2f} and 1.0")
+    if args.update_gain_threshold is not None and not 0.0 <= args.update_gain_threshold < 1.0:
+        raise ValueError("update-gain-threshold must be in [0, 1)")
 
     input_path = args.input.resolve()
     cold_start_root = args.cold_start_root.resolve()
@@ -481,6 +514,7 @@ def main() -> None:
                     "maxiter": args.maxiter,
                     "max_sweeps": args.max_sweeps,
                     "alpha": args.alpha,
+                    "update_gain_threshold": args.update_gain_threshold,
                 }
             )
     if not tasks:
@@ -495,12 +529,20 @@ def main() -> None:
         "created": now(),
         "status": "running",
         "pid": os.getpid(),
-        "method": "fixed-alpha 0.30, one-start, zero-proximal Gauss--Seidel search under corrected demand",
+        "method": (
+            "fixed-alpha, one-start, zero-proximal selective Gauss--Seidel search under corrected demand"
+            if args.update_gain_threshold is not None
+            else "fixed-alpha, one-start, zero-proximal Gauss--Seidel search under corrected demand"
+        ),
         "acceptance_criterion": "one-start common frozen-profile maximum relative gain <= 1%, all six solves successful",
         "acceptance_audit_starts": 1,
         "multistart_used": False,
         "alpha": args.alpha,
         "minimum_allowed_alpha": MIN_ALPHA,
+        "update_gain_threshold": args.update_gain_threshold,
+        "players_at_or_below_gain_threshold_are_frozen": (
+            args.update_gain_threshold is not None
+        ),
         "move_cap": None,
         "input": relative(input_path),
         "input_sha256": sha256(input_path),
