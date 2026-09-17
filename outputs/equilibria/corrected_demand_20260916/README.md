@@ -56,6 +56,14 @@ The `provenance` directory contains the fixed protocols and complete source
 manifests. The full comparison report remains one directory above as
 `three_corrected_demand_equilibria_20260916_232146.md`.
 
+`convergence_paths_24_reported_runs.json` is the plot-ready consolidation of
+the 21 completed factorial branches that did not pass and the three accepted
+paths E1--E3. It stores the initial and after-sweep audit values, player-level
+relative gains, sequential-update gains, and strategy-change metrics. E1 is
+identified as coming from the earlier 3x3 experiment; the factorial branch
+that failed during sweep 12 is retained separately inside the JSON under
+`excluded_partial_runs`.
+
 ## Claim boundary
 
 These files support the description **one-start local computational
