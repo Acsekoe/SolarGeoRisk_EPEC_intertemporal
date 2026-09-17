@@ -6,6 +6,7 @@ one-start audits; it does not import or execute the model.
 
 from __future__ import annotations
 
+import argparse
 import json
 import re
 from datetime import datetime
@@ -14,11 +15,13 @@ from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[1]
+SOURCE_ROOT = ROOT
 FACTORIAL_ROOT = (
-    ROOT / "outputs/demand_calibration/paper_profile_factorial_20260916_182347"
+    SOURCE_ROOT
+    / "outputs/demand_calibration/paper_profile_factorial_20260916_182347"
 )
 E1_ROOT = (
-    ROOT
+    SOURCE_ROOT
     / "outputs/old/demand_calibration/paper_profile_3x3_a030_20260916_110336"
     / "ch-af-apac-eu-row-us/cost"
 )
@@ -44,7 +47,10 @@ def read_json(path: Path) -> dict[str, Any]:
 
 
 def relative(path: Path) -> str:
-    return path.relative_to(ROOT).as_posix()
+    try:
+        return path.relative_to(SOURCE_ROOT).as_posix()
+    except ValueError:
+        return path.relative_to(ROOT).as_posix()
 
 
 def audit_sweep(path: Path) -> int:
@@ -206,6 +212,30 @@ def build_run(
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--source-root",
+        type=Path,
+        default=ROOT,
+        help=(
+            "Directory containing the archived outputs/ tree. Use the extracted "
+            "archive handoff directory after the raw runs leave the repository."
+        ),
+    )
+    args = parser.parse_args()
+
+    global SOURCE_ROOT, FACTORIAL_ROOT, E1_ROOT
+    SOURCE_ROOT = args.source_root.resolve()
+    FACTORIAL_ROOT = (
+        SOURCE_ROOT
+        / "outputs/demand_calibration/paper_profile_factorial_20260916_182347"
+    )
+    E1_ROOT = (
+        SOURCE_ROOT
+        / "outputs/old/demand_calibration/paper_profile_3x3_a030_20260916_110336"
+        / "ch-af-apac-eu-row-us/cost"
+    )
+
     factorial_manifest = read_json(FACTORIAL_ROOT / "manifest.json")
     branch_specs = factorial_manifest["branches"]
 
@@ -316,6 +346,11 @@ def main() -> None:
             "factorial_protocol": relative(FACTORIAL_ROOT / "PROTOCOL.md"),
             "reported_equilibria_package": (
                 "outputs/equilibria/corrected_demand_20260916"
+            ),
+            "path_note": (
+                "Raw source paths are historical repository-relative paths. The "
+                "source trees were externalized after this self-contained dataset "
+                "was assembled."
             ),
         },
         "runs": included_runs,

@@ -112,30 +112,30 @@ equilibrium test.
 
 ### E1
 
-- Profile: `outputs/old/demand_calibration/paper_profile_3x3_a030_20260916_110336/ch-af-apac-eu-row-us/cost/sweep_006.json`
+- Profile: `outputs/equilibria/corrected_demand_20260916/E1/equilibrium_profile.json`
 - Profile SHA-256: `2944B91566F6C2804225D71C3FE3A5C7A30F786F20C4713D903A449B3952E7B5`
-- Audit: `outputs/old/demand_calibration/paper_profile_3x3_a030_20260916_110336/ch-af-apac-eu-row-us/cost/audits/audit_sweep_006_one_start.json`
+- Audit: `outputs/equilibria/corrected_demand_20260916/E1/audit_one_start.json`
 - Audit SHA-256: `0BD58B56465AA3D765CFA29A92A7B1F941283CB8329E7CDEC700EAE72AB9CA9F`
 
 ### E2
 
-- Profile: `outputs/demand_calibration/paper_profile_factorial_20260916_182347/ch-row-apac-us-eu-af/pf120_k050_a030/sweep_005.json`
+- Profile: `outputs/equilibria/corrected_demand_20260916/E2/equilibrium_profile.json`
 - Profile SHA-256: `2163A7D210F3BE8592B9C08538DDCEC3E92B1652F1C657B81D26C07B1C2A72E5`
-- Audit: `outputs/demand_calibration/paper_profile_factorial_20260916_182347/ch-row-apac-us-eu-af/pf120_k050_a030/audits/audit_sweep_005_one_start.json`
+- Audit: `outputs/equilibria/corrected_demand_20260916/E2/audit_one_start.json`
 - Audit SHA-256: `4480C66D931211F5AB20E18C4DB2191C441908F4ED30EB72392E2ED55EADB4D6`
 
 ### E3
 
-- Profile: `outputs/demand_calibration/paper_profile_factorial_20260916_182347/ch-row-apac-us-eu-af/pf120_k100_a030/sweep_007.json`
+- Profile: `outputs/equilibria/corrected_demand_20260916/E3/equilibrium_profile.json`
 - Profile SHA-256: `08CD5D82638EAE3475D122054926C7EAC2F2E1232A8B54F4B7BE63B197A23FD3`
-- Audit: `outputs/demand_calibration/paper_profile_factorial_20260916_182347/ch-row-apac-us-eu-af/pf120_k100_a030/audits/audit_sweep_007_one_start.json`
+- Audit: `outputs/equilibria/corrected_demand_20260916/E3/audit_one_start.json`
 - Audit SHA-256: `DF8F7E849DCE457512EB4C5B4DB428426CBF7355D20DAB5D8F8DDE7C49BBE674`
 
 ### Factorial experiment
 
-- Protocol: `outputs/demand_calibration/paper_profile_factorial_20260916_182347/PROTOCOL.md`
+- Protocol: `outputs/equilibria/corrected_demand_20260916/provenance/E2_E3_factorial_protocol.md`
 - Protocol SHA-256: `7598031B637135769BD837F6EC78F47E59A249D214E1B97689E4B65564DD3CAB`
-- Manifest: `outputs/demand_calibration/paper_profile_factorial_20260916_182347/manifest.json`
+- Manifest: `outputs/equilibria/corrected_demand_20260916/provenance/E2_E3_factorial_manifest.json`
 - Manifest SHA-256: `856C680C4D1F2141E3F07621806BB31D8CEFAF7448C5E663F69B8445EDBD08D1`
 - Corrected input SHA-256: `5E3E392B695AB917D8FF445203C9A04F1308083391BBF3C64D35E7ED3C9AD234`
 

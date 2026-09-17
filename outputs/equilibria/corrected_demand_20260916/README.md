@@ -1,9 +1,10 @@
 # Reported corrected-demand equilibria
 
 This folder is the self-contained reporting package for the three accepted
-corrected-demand profiles. The original source artifacts remain in their run
-directories so that the recorded provenance paths and hashes continue to work.
-No additional model run was used to create this package.
+corrected-demand profiles. The raw experiment trees have been externalized
+from the repository; paths stored inside copied status and manifest files are
+therefore historical provenance paths. The canonical copies and their hashes
+remain here. No additional model run was used to create this package.
 
 ## Algorithm chronology
 
@@ -62,7 +63,8 @@ paths E1--E3. It stores the initial and after-sweep audit values, player-level
 relative gains, sequential-update gains, and strategy-change metrics. E1 is
 identified as coming from the earlier 3x3 experiment; the factorial branch
 that failed during sweep 12 is retained separately inside the JSON under
-`excluded_partial_runs`.
+`excluded_partial_runs`. All plotted metrics are embedded in that JSON, so the
+raw run trees are not required to produce the later convergence figure.
 
 ## Claim boundary
 
