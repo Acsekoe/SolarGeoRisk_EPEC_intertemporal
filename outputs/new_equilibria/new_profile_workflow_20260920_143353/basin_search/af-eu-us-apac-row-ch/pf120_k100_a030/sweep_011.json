@@ -1,0 +1,2744 @@
+{
+  "created": "2026-09-20T15:07:46+02:00",
+  "sequence": "af-eu-us-apac-row-ch",
+  "branch": "pf120_k100_a030",
+  "branch_specification": {
+    "description": "corrected Stage-1 paper-profile anchor; bilateral export offers initialized at 1.20 times period-specific manufacturing cost; anchor net capacity changes scaled by 1.00; fixed all-player Gauss--Seidel damping 0.30",
+    "kind": "paper_profile_price_capacity_factorial",
+    "price_offer_factor_to_manufacturing_cost": 1.2,
+    "capacity_change_path_weight": 1.0,
+    "capacity_reference_path": "corrected Stage-1 endpoint",
+    "capacity_zero_weight_endpoint": "observed initial capacity with zero net changes",
+    "domestic_offer_initialization": "period-specific manufacturing cost",
+    "bilateral_export_offer_initialization": "price factor times period-specific manufacturing cost, clipped to model bounds",
+    "alpha": 0.3,
+    "algorithmic_proximal_penalties": 0.0,
+    "move_cap": null,
+    "gain_filter": null,
+    "players_frozen": false
+  },
+  "sweep": 11,
+  "player_order": [
+    "af",
+    "eu",
+    "us",
+    "apac",
+    "row",
+    "ch"
+  ],
+  "alpha": 0.3,
+  "minimum_allowed_alpha": 0.3,
+  "update_gain_threshold": null,
+  "players_at_or_below_gain_threshold_are_frozen": false,
+  "move_cap": null,
+  "source_workbook": "outputs\\demand_calibration\\penalized_sweep30_continuation_20260920_140510\\af-eu-us-apac-row-ch\\results\\results_20260920_140513_15ee88.xlsx",
+  "algorithmic_proximal_penalties": 0.0,
+  "terminal_salvage_fraction": 0.5,
+  "multistart_used": false,
+  "players": [
+    {
+      "player": "af",
+      "reference_objective": 474842.62996604585,
+      "best_response_objective": 474868.82774301444,
+      "relative_gain": 5.517149328076171e-05,
+      "raw_strategy_move": 0.007424289286931813,
+      "nominal_damping_weight": 0.3,
+      "damping_weight": 0.3,
+      "update_applied": true,
+      "update_gain_threshold": null,
+      "move_cap": null,
+      "applied_strategy_move": 0.002227286786079544,
+      "optimizer_success": true,
+      "retry_used": false,
+      "starts": 1,
+      "chosen_start_index": 0,
+      "attempts": [
+        {
+          "start_index": 0,
+          "start_label": "candidate_strategy",
+          "success": true,
+          "status": 0,
+          "message": "Optimization terminated successfully",
+          "iterations": 18,
+          "objective": 474868.82774301444,
+          "optimization_objective": 474868.82774301444,
+          "proximal_cost": 0.0
+        }
+      ],
+      "reference_market_diagnostics": {
+        "max_balance_residual": 1.516389771197353e-13,
+        "max_capacity_violation": 0.0,
+        "max_positive_flow_stationarity": 2.578117143960144e-09,
+        "total_slsqp_iterations": 58.0
+      }
+    },
+    {
+      "player": "eu",
+      "reference_objective": 2010018.0835862083,
+      "best_response_objective": 2010024.9164054699,
+      "relative_gain": 3.399381984363675e-06,
+      "raw_strategy_move": 0.0008510506429572331,
+      "nominal_damping_weight": 0.3,
+      "damping_weight": 0.3,
+      "update_applied": true,
+      "update_gain_threshold": null,
+      "move_cap": null,
+      "applied_strategy_move": 0.0002553151928871671,
+      "optimizer_success": true,
+      "retry_used": false,
+      "starts": 1,
+      "chosen_start_index": 0,
+      "attempts": [
+        {
+          "start_index": 0,
+          "start_label": "candidate_strategy",
+          "success": true,
+          "status": 0,
+          "message": "Optimization terminated successfully",
+          "iterations": 7,
+          "objective": 2010024.9164054699,
+          "optimization_objective": 2010024.9164054699,
+          "proximal_cost": 0.0
+        }
+      ],
+      "reference_market_diagnostics": {
+        "max_balance_residual": 1.1517952482840248e-13,
+        "max_capacity_violation": 0.0,
+        "max_positive_flow_stationarity": 2.6050437811916854e-09,
+        "total_slsqp_iterations": 58.0
+      }
+    },
+    {
+      "player": "us",
+      "reference_objective": 743450.7828233076,
+      "best_response_objective": 743458.4316747815,
+      "relative_gain": 1.0288309126375648e-05,
+      "raw_strategy_move": 0.00091445648132634,
+      "nominal_damping_weight": 0.3,
+      "damping_weight": 0.3,
+      "update_applied": true,
+      "update_gain_threshold": null,
+      "move_cap": null,
+      "applied_strategy_move": 0.00027433694439793043,
+      "optimizer_success": true,
+      "retry_used": false,
+      "starts": 1,
+      "chosen_start_index": 0,
+      "attempts": [
+        {
+          "start_index": 0,
+          "start_label": "candidate_strategy",
+          "success": true,
+          "status": 0,
+          "message": "Optimization terminated successfully",
+          "iterations": 10,
+          "objective": 743458.4316747815,
+          "optimization_objective": 743458.4316747815,
+          "proximal_cost": 0.0
+        }
+      ],
+      "reference_market_diagnostics": {
+        "max_balance_residual": 1.2056627933586754e-13,
+        "max_capacity_violation": 0.0,
+        "max_positive_flow_stationarity": 2.413745606107397e-09,
+        "total_slsqp_iterations": 58.0
+      }
+    },
+    {
+      "player": "apac",
+      "reference_objective": 1061956.55098541,
+      "best_response_objective": 1154388.4369435296,
+      "relative_gain": 0.08703923514794479,
+      "raw_strategy_move": 0.04273946926533871,
+      "nominal_damping_weight": 0.3,
+      "damping_weight": 0.3,
+      "update_applied": true,
+      "update_gain_threshold": null,
+      "move_cap": null,
+      "applied_strategy_move": 0.012821840779601601,
+      "optimizer_success": true,
+      "retry_used": false,
+      "starts": 1,
+      "chosen_start_index": 0,
+      "attempts": [
+        {
+          "start_index": 0,
+          "start_label": "candidate_strategy",
+          "success": true,
+          "status": 0,
+          "message": "Optimization terminated successfully",
+          "iterations": 91,
+          "objective": 1154388.4369435296,
+          "optimization_objective": 1154388.4369435296,
+          "proximal_cost": 0.0
+        }
+      ],
+      "reference_market_diagnostics": {
+        "max_balance_residual": 4.617750539714295e-14,
+        "max_capacity_violation": 0.0,
+        "max_positive_flow_stationarity": 1.8267257287215131e-09,
+        "total_slsqp_iterations": 58.0
+      }
+    },
+    {
+      "player": "row",
+      "reference_objective": 1564633.1203170263,
+      "best_response_objective": 1565021.5548264452,
+      "relative_gain": 0.00024825916336233513,
+      "raw_strategy_move": 0.007190946430383903,
+      "nominal_damping_weight": 0.3,
+      "damping_weight": 0.3,
+      "update_applied": true,
+      "update_gain_threshold": null,
+      "move_cap": null,
+      "applied_strategy_move": 0.002157283929115149,
+      "optimizer_success": true,
+      "retry_used": false,
+      "starts": 1,
+      "chosen_start_index": 0,
+      "attempts": [
+        {
+          "start_index": 0,
+          "start_label": "candidate_strategy",
+          "success": true,
+          "status": 0,
+          "message": "Optimization terminated successfully",
+          "iterations": 6,
+          "objective": 1565021.5548264452,
+          "optimization_objective": 1565021.5548264452,
+          "proximal_cost": 0.0
+        }
+      ],
+      "reference_market_diagnostics": {
+        "max_balance_residual": 8.828186691059444e-14,
+        "max_capacity_violation": 0.0,
+        "max_positive_flow_stationarity": 3.7497625370563176e-09,
+        "total_slsqp_iterations": 60.0
+      }
+    },
+    {
+      "player": "ch",
+      "reference_objective": 4124473.6752361837,
+      "best_response_objective": 4182781.5404419936,
+      "relative_gain": 0.01413704385020011,
+      "raw_strategy_move": 0.047535902622755685,
+      "nominal_damping_weight": 0.3,
+      "damping_weight": 0.3,
+      "update_applied": true,
+      "update_gain_threshold": null,
+      "move_cap": null,
+      "applied_strategy_move": 0.014260770786826697,
+      "optimizer_success": true,
+      "retry_used": false,
+      "starts": 1,
+      "chosen_start_index": 0,
+      "attempts": [
+        {
+          "start_index": 0,
+          "start_label": "candidate_strategy",
+          "success": true,
+          "status": 0,
+          "message": "Optimization terminated successfully",
+          "iterations": 66,
+          "objective": 4182781.5404419936,
+          "optimization_objective": 4182781.5404419936,
+          "proximal_cost": 0.0
+        }
+      ],
+      "reference_market_diagnostics": {
+        "max_balance_residual": 7.634551478222323e-14,
+        "max_capacity_violation": 0.0,
+        "max_positive_flow_stationarity": 3.745422334254375e-09,
+        "total_slsqp_iterations": 60.0
+      }
+    }
+  ],
+  "updated_players": [
+    "af",
+    "eu",
+    "us",
+    "apac",
+    "row",
+    "ch"
+  ],
+  "max_sequential_relative_gain": 0.08703923514794479,
+  "strategy_change_metric": 0.014260770786826697,
+  "ending_market_diagnostics": {
+    "max_balance_residual": 1.0697772229666341e-13,
+    "max_capacity_violation": 0.0,
+    "max_positive_flow_stationarity": 1.9842847749058137e-08,
+    "total_slsqp_iterations": 58.0
+  },
+  "ending_profile": {
+    "strategy": {
+      "dK_net": [
+        {
+          "region": "af",
+          "time": "2025",
+          "value": -0.5245455282359135
+        },
+        {
+          "region": "af",
+          "time": "2030",
+          "value": 0.004941133466846157
+        },
+        {
+          "region": "af",
+          "time": "2035",
+          "value": 0.016590236788819806
+        },
+        {
+          "region": "af",
+          "time": "2040",
+          "value": 0.0005095250155774322
+        },
+        {
+          "region": "apac",
+          "time": "2025",
+          "value": 12.323007091375713
+        },
+        {
+          "region": "apac",
+          "time": "2030",
+          "value": 11.150958873499409
+        },
+        {
+          "region": "apac",
+          "time": "2035",
+          "value": 6.723910643878178
+        },
+        {
+          "region": "apac",
+          "time": "2040",
+          "value": 0.21899622792744555
+        },
+        {
+          "region": "ch",
+          "time": "2025",
+          "value": -67.60708264413957
+        },
+        {
+          "region": "ch",
+          "time": "2030",
+          "value": -0.3303873162405033
+        },
+        {
+          "region": "ch",
+          "time": "2035",
+          "value": -0.1181388104914377
+        },
+        {
+          "region": "ch",
+          "time": "2040",
+          "value": 0.06504343348154212
+        },
+        {
+          "region": "eu",
+          "time": "2025",
+          "value": -4.399883556171005
+        },
+        {
+          "region": "eu",
+          "time": "2030",
+          "value": -6.703931274452264e-05
+        },
+        {
+          "region": "eu",
+          "time": "2035",
+          "value": -3.333854203619291e-05
+        },
+        {
+          "region": "eu",
+          "time": "2040",
+          "value": 2.2505013400587452e-05
+        },
+        {
+          "region": "row",
+          "time": "2025",
+          "value": -57.12441846403029
+        },
+        {
+          "region": "row",
+          "time": "2030",
+          "value": -0.035054340848594996
+        },
+        {
+          "region": "row",
+          "time": "2035",
+          "value": -0.0010186353005674053
+        },
+        {
+          "region": "row",
+          "time": "2040",
+          "value": 0.0010997648447152418
+        },
+        {
+          "region": "us",
+          "time": "2025",
+          "value": -8.399342721246022
+        },
+        {
+          "region": "us",
+          "time": "2030",
+          "value": -0.00022868770794947046
+        },
+        {
+          "region": "us",
+          "time": "2035",
+          "value": -0.00015252134583145765
+        },
+        {
+          "region": "us",
+          "time": "2040",
+          "value": -2.138736489196591e-05
+        }
+      ],
+      "p_offer": [
+        {
+          "exporter": "af",
+          "importer": "af",
+          "time": "2025",
+          "value": 180.93
+        },
+        {
+          "exporter": "af",
+          "importer": "af",
+          "time": "2030",
+          "value": 119.25942540354018
+        },
+        {
+          "exporter": "af",
+          "importer": "af",
+          "time": "2035",
+          "value": 106.08917463044914
+        },
+        {
+          "exporter": "af",
+          "importer": "af",
+          "time": "2040",
+          "value": 95.83213549134676
+        },
+        {
+          "exporter": "af",
+          "importer": "af",
+          "time": "2045",
+          "value": 88.87266733503138
+        },
+        {
+          "exporter": "af",
+          "importer": "apac",
+          "time": "2025",
+          "value": 181.70625317490416
+        },
+        {
+          "exporter": "af",
+          "importer": "apac",
+          "time": "2030",
+          "value": 119.76910342108441
+        },
+        {
+          "exporter": "af",
+          "importer": "apac",
+          "time": "2035",
+          "value": 106.4819532650208
+        },
+        {
+          "exporter": "af",
+          "importer": "apac",
+          "time": "2040",
+          "value": 96.15314224350266
+        },
+        {
+          "exporter": "af",
+          "importer": "apac",
+          "time": "2045",
+          "value": 0.0
+        },
+        {
+          "exporter": "af",
+          "importer": "ch",
+          "time": "2025",
+          "value": 181.72471564275537
+        },
+        {
+          "exporter": "af",
+          "importer": "ch",
+          "time": "2030",
+          "value": 119.76811795409515
+        },
+        {
+          "exporter": "af",
+          "importer": "ch",
+          "time": "2035",
+          "value": 106.4825813570612
+        },
+        {
+          "exporter": "af",
+          "importer": "ch",
+          "time": "2040",
+          "value": 96.15839782232464
+        },
+        {
+          "exporter": "af",
+          "importer": "ch",
+          "time": "2045",
+          "value": 0.0
+        },
+        {
+          "exporter": "af",
+          "importer": "eu",
+          "time": "2025",
+          "value": 183.42585223919096
+        },
+        {
+          "exporter": "af",
+          "importer": "eu",
+          "time": "2030",
+          "value": 126.19961067366046
+        },
+        {
+          "exporter": "af",
+          "importer": "eu",
+          "time": "2035",
+          "value": 106.34771635524146
+        },
+        {
+          "exporter": "af",
+          "importer": "eu",
+          "time": "2040",
+          "value": 99.55741460649811
+        },
+        {
+          "exporter": "af",
+          "importer": "eu",
+          "time": "2045",
+          "value": 0.0
+        },
+        {
+          "exporter": "af",
+          "importer": "row",
+          "time": "2025",
+          "value": 183.47102314312724
+        },
+        {
+          "exporter": "af",
+          "importer": "row",
+          "time": "2030",
+          "value": 119.7355948538362
+        },
+        {
+          "exporter": "af",
+          "importer": "row",
+          "time": "2035",
+          "value": 106.42964647357476
+        },
+        {
+          "exporter": "af",
+          "importer": "row",
+          "time": "2040",
+          "value": 96.38290996605076
+        },
+        {
+          "exporter": "af",
+          "importer": "row",
+          "time": "2045",
+          "value": 0.0
+        },
+        {
+          "exporter": "af",
+          "importer": "us",
+          "time": "2025",
+          "value": 181.55933601496696
+        },
+        {
+          "exporter": "af",
+          "importer": "us",
+          "time": "2030",
+          "value": 119.76438928442568
+        },
+        {
+          "exporter": "af",
+          "importer": "us",
+          "time": "2035",
+          "value": 106.4778191713814
+        },
+        {
+          "exporter": "af",
+          "importer": "us",
+          "time": "2040",
+          "value": 96.15471332345264
+        },
+        {
+          "exporter": "af",
+          "importer": "us",
+          "time": "2045",
+          "value": 0.0
+        },
+        {
+          "exporter": "apac",
+          "importer": "af",
+          "time": "2025",
+          "value": 204.39384144037365
+        },
+        {
+          "exporter": "apac",
+          "importer": "af",
+          "time": "2030",
+          "value": 147.89250674151734
+        },
+        {
+          "exporter": "apac",
+          "importer": "af",
+          "time": "2035",
+          "value": 124.281781226313
+        },
+        {
+          "exporter": "apac",
+          "importer": "af",
+          "time": "2040",
+          "value": 149.2632252834275
+        },
+        {
+          "exporter": "apac",
+          "importer": "af",
+          "time": "2045",
+          "value": 0.0
+        },
+        {
+          "exporter": "apac",
+          "importer": "apac",
+          "time": "2025",
+          "value": 187.45
+        },
+        {
+          "exporter": "apac",
+          "importer": "apac",
+          "time": "2030",
+          "value": 123.55706235501908
+        },
+        {
+          "exporter": "apac",
+          "importer": "apac",
+          "time": "2035",
+          "value": 109.9122079504653
+        },
+        {
+          "exporter": "apac",
+          "importer": "apac",
+          "time": "2040",
+          "value": 99.28554577932321
+        },
+        {
+          "exporter": "apac",
+          "importer": "apac",
+          "time": "2045",
+          "value": 92.0752859777352
+        },
+        {
+          "exporter": "apac",
+          "importer": "ch",
+          "time": "2025",
+          "value": 187.91449720790843
+        },
+        {
+          "exporter": "apac",
+          "importer": "ch",
+          "time": "2030",
+          "value": 124.42900899497371
+        },
+        {
+          "exporter": "apac",
+          "importer": "ch",
+          "time": "2035",
+          "value": 111.45954359611781
+        },
+        {
+          "exporter": "apac",
+          "importer": "ch",
+          "time": "2040",
+          "value": 100.17894371454814
+        },
+        {
+          "exporter": "apac",
+          "importer": "ch",
+          "time": "2045",
+          "value": 0.0
+        },
+        {
+          "exporter": "apac",
+          "importer": "eu",
+          "time": "2025",
+          "value": 212.3857527019843
+        },
+        {
+          "exporter": "apac",
+          "importer": "eu",
+          "time": "2030",
+          "value": 168.24727123206378
+        },
+        {
+          "exporter": "apac",
+          "importer": "eu",
+          "time": "2035",
+          "value": 123.92236260445887
+        },
+        {
+          "exporter": "apac",
+          "importer": "eu",
+          "time": "2040",
+          "value": 176.86210370199154
+        },
+        {
+          "exporter": "apac",
+          "importer": "eu",
+          "time": "2045",
+          "value": 0.0
+        },
+        {
+          "exporter": "apac",
+          "importer": "row",
+          "time": "2025",
+          "value": 207.47522193542946
+        },
+        {
+          "exporter": "apac",
+          "importer": "row",
+          "time": "2030",
+          "value": 145.63073022337682
+        },
+        {
+          "exporter": "apac",
+          "importer": "row",
+          "time": "2035",
+          "value": 122.7460286092398
+        },
+        {
+          "exporter": "apac",
+          "importer": "row",
+          "time": "2040",
+          "value": 168.04113689346372
+        },
+        {
+          "exporter": "apac",
+          "importer": "row",
+          "time": "2045",
+          "value": 0.0
+        },
+        {
+          "exporter": "apac",
+          "importer": "us",
+          "time": "2025",
+          "value": 207.93371675827711
+        },
+        {
+          "exporter": "apac",
+          "importer": "us",
+          "time": "2030",
+          "value": 146.9383343531259
+        },
+        {
+          "exporter": "apac",
+          "importer": "us",
+          "time": "2035",
+          "value": 123.17684209942718
+        },
+        {
+          "exporter": "apac",
+          "importer": "us",
+          "time": "2040",
+          "value": 163.99842868499755
+        },
+        {
+          "exporter": "apac",
+          "importer": "us",
+          "time": "2045",
+          "value": 0.0
+        },
+        {
+          "exporter": "ch",
+          "importer": "af",
+          "time": "2025",
+          "value": 205.95375006212683
+        },
+        {
+          "exporter": "ch",
+          "importer": "af",
+          "time": "2030",
+          "value": 175.86995928238252
+        },
+        {
+          "exporter": "ch",
+          "importer": "af",
+          "time": "2035",
+          "value": 125.65290066370613
+        },
+        {
+          "exporter": "ch",
+          "importer": "af",
+          "time": "2040",
+          "value": 223.68810141772292
+        },
+        {
+          "exporter": "ch",
+          "importer": "af",
+          "time": "2045",
+          "value": 0.0
+        },
+        {
+          "exporter": "ch",
+          "importer": "apac",
+          "time": "2025",
+          "value": 176.15891661407898
+        },
+        {
+          "exporter": "ch",
+          "importer": "apac",
+          "time": "2030",
+          "value": 146.74383890277778
+        },
+        {
+          "exporter": "ch",
+          "importer": "apac",
+          "time": "2035",
+          "value": 102.50991880167948
+        },
+        {
+          "exporter": "ch",
+          "importer": "apac",
+          "time": "2040",
+          "value": 204.2209741432278
+        },
+        {
+          "exporter": "ch",
+          "importer": "apac",
+          "time": "2045",
+          "value": 0.0
+        },
+        {
+          "exporter": "ch",
+          "importer": "ch",
+          "time": "2025",
+          "value": 163.0
+        },
+        {
+          "exporter": "ch",
+          "importer": "ch",
+          "time": "2030",
+          "value": 107.44092378697313
+        },
+        {
+          "exporter": "ch",
+          "importer": "ch",
+          "time": "2035",
+          "value": 95.57583300040461
+        },
+        {
+          "exporter": "ch",
+          "importer": "ch",
+          "time": "2040",
+          "value": 86.33525719941149
+        },
+        {
+          "exporter": "ch",
+          "importer": "ch",
+          "time": "2045",
+          "value": 80.06546606759582
+        },
+        {
+          "exporter": "ch",
+          "importer": "eu",
+          "time": "2025",
+          "value": 209.7303928069723
+        },
+        {
+          "exporter": "ch",
+          "importer": "eu",
+          "time": "2030",
+          "value": 188.55191466613962
+        },
+        {
+          "exporter": "ch",
+          "importer": "eu",
+          "time": "2035",
+          "value": 123.70394461837479
+        },
+        {
+          "exporter": "ch",
+          "importer": "eu",
+          "time": "2040",
+          "value": 258.6764634354358
+        },
+        {
+          "exporter": "ch",
+          "importer": "eu",
+          "time": "2045",
+          "value": 0.0
+        },
+        {
+          "exporter": "ch",
+          "importer": "row",
+          "time": "2025",
+          "value": 211.6069351268576
+        },
+        {
+          "exporter": "ch",
+          "importer": "row",
+          "time": "2030",
+          "value": 178.91562137625374
+        },
+        {
+          "exporter": "ch",
+          "importer": "row",
+          "time": "2035",
+          "value": 129.13541467503023
+        },
+        {
+          "exporter": "ch",
+          "importer": "row",
+          "time": "2040",
+          "value": 251.39739313034852
+        },
+        {
+          "exporter": "ch",
+          "importer": "row",
+          "time": "2045",
+          "value": 0.0
+        },
+        {
+          "exporter": "ch",
+          "importer": "us",
+          "time": "2025",
+          "value": 210.64441700943516
+        },
+        {
+          "exporter": "ch",
+          "importer": "us",
+          "time": "2030",
+          "value": 179.5291485554679
+        },
+        {
+          "exporter": "ch",
+          "importer": "us",
+          "time": "2035",
+          "value": 125.59580910690366
+        },
+        {
+          "exporter": "ch",
+          "importer": "us",
+          "time": "2040",
+          "value": 247.43908375363017
+        },
+        {
+          "exporter": "ch",
+          "importer": "us",
+          "time": "2045",
+          "value": 0.0
+        },
+        {
+          "exporter": "eu",
+          "importer": "af",
+          "time": "2025",
+          "value": 300.44846531525263
+        },
+        {
+          "exporter": "eu",
+          "importer": "af",
+          "time": "2030",
+          "value": 198.0299167854437
+        },
+        {
+          "exporter": "eu",
+          "importer": "af",
+          "time": "2035",
+          "value": 176.1458841408728
+        },
+        {
+          "exporter": "eu",
+          "importer": "af",
+          "time": "2040",
+          "value": 159.1019627177374
+        },
+        {
+          "exporter": "eu",
+          "importer": "af",
+          "time": "2045",
+          "value": 0.0
+        },
+        {
+          "exporter": "eu",
+          "importer": "apac",
+          "time": "2025",
+          "value": 300.4484674633923
+        },
+        {
+          "exporter": "eu",
+          "importer": "apac",
+          "time": "2030",
+          "value": 198.02991697315707
+        },
+        {
+          "exporter": "eu",
+          "importer": "apac",
+          "time": "2035",
+          "value": 176.14588374896073
+        },
+        {
+          "exporter": "eu",
+          "importer": "apac",
+          "time": "2040",
+          "value": 159.10195650304473
+        },
+        {
+          "exporter": "eu",
+          "importer": "apac",
+          "time": "2045",
+          "value": 0.0
+        },
+        {
+          "exporter": "eu",
+          "importer": "ch",
+          "time": "2025",
+          "value": 300.4484675408423
+        },
+        {
+          "exporter": "eu",
+          "importer": "ch",
+          "time": "2030",
+          "value": 198.0299170446497
+        },
+        {
+          "exporter": "eu",
+          "importer": "ch",
+          "time": "2035",
+          "value": 176.145883654648
+        },
+        {
+          "exporter": "eu",
+          "importer": "ch",
+          "time": "2040",
+          "value": 159.10194785832311
+        },
+        {
+          "exporter": "eu",
+          "importer": "ch",
+          "time": "2045",
+          "value": 0.0
+        },
+        {
+          "exporter": "eu",
+          "importer": "eu",
+          "time": "2025",
+          "value": 299.25
+        },
+        {
+          "exporter": "eu",
+          "importer": "eu",
+          "time": "2030",
+          "value": 197.24967143099207
+        },
+        {
+          "exporter": "eu",
+          "importer": "eu",
+          "time": "2035",
+          "value": 175.4666750022766
+        },
+        {
+          "exporter": "eu",
+          "importer": "eu",
+          "time": "2040",
+          "value": 158.50199826333673
+        },
+        {
+          "exporter": "eu",
+          "importer": "eu",
+          "time": "2045",
+          "value": 146.99135411489604
+        },
+        {
+          "exporter": "eu",
+          "importer": "row",
+          "time": "2025",
+          "value": 300.44846756536225
+        },
+        {
+          "exporter": "eu",
+          "importer": "row",
+          "time": "2030",
+          "value": 198.02991675380343
+        },
+        {
+          "exporter": "eu",
+          "importer": "row",
+          "time": "2035",
+          "value": 176.14588422715036
+        },
+        {
+          "exporter": "eu",
+          "importer": "row",
+          "time": "2040",
+          "value": 159.1019692870399
+        },
+        {
+          "exporter": "eu",
+          "importer": "row",
+          "time": "2045",
+          "value": 0.0
+        },
+        {
+          "exporter": "eu",
+          "importer": "us",
+          "time": "2025",
+          "value": 300.44846756210774
+        },
+        {
+          "exporter": "eu",
+          "importer": "us",
+          "time": "2030",
+          "value": 198.02991680813219
+        },
+        {
+          "exporter": "eu",
+          "importer": "us",
+          "time": "2035",
+          "value": 176.14588402156167
+        },
+        {
+          "exporter": "eu",
+          "importer": "us",
+          "time": "2040",
+          "value": 159.10195970425895
+        },
+        {
+          "exporter": "eu",
+          "importer": "us",
+          "time": "2045",
+          "value": 0.0
+        },
+        {
+          "exporter": "row",
+          "importer": "af",
+          "time": "2025",
+          "value": 355.6999491277856
+        },
+        {
+          "exporter": "row",
+          "importer": "af",
+          "time": "2030",
+          "value": 234.37951366475585
+        },
+        {
+          "exporter": "row",
+          "importer": "af",
+          "time": "2035",
+          "value": 208.43396519561935
+        },
+        {
+          "exporter": "row",
+          "importer": "af",
+          "time": "2040",
+          "value": 188.23790239324998
+        },
+        {
+          "exporter": "row",
+          "importer": "af",
+          "time": "2045",
+          "value": 0.0
+        },
+        {
+          "exporter": "row",
+          "importer": "apac",
+          "time": "2025",
+          "value": 355.6999491252826
+        },
+        {
+          "exporter": "row",
+          "importer": "apac",
+          "time": "2030",
+          "value": 234.3795018638662
+        },
+        {
+          "exporter": "row",
+          "importer": "apac",
+          "time": "2035",
+          "value": 208.43396521992577
+        },
+        {
+          "exporter": "row",
+          "importer": "apac",
+          "time": "2040",
+          "value": 188.2379021086368
+        },
+        {
+          "exporter": "row",
+          "importer": "apac",
+          "time": "2045",
+          "value": 0.0
+        },
+        {
+          "exporter": "row",
+          "importer": "ch",
+          "time": "2025",
+          "value": 355.6999490889701
+        },
+        {
+          "exporter": "row",
+          "importer": "ch",
+          "time": "2030",
+          "value": 234.3794976644197
+        },
+        {
+          "exporter": "row",
+          "importer": "ch",
+          "time": "2035",
+          "value": 208.43396513835083
+        },
+        {
+          "exporter": "row",
+          "importer": "ch",
+          "time": "2040",
+          "value": 188.2379026464783
+        },
+        {
+          "exporter": "row",
+          "importer": "ch",
+          "time": "2045",
+          "value": 0.0
+        },
+        {
+          "exporter": "row",
+          "importer": "eu",
+          "time": "2025",
+          "value": 355.69994916230894
+        },
+        {
+          "exporter": "row",
+          "importer": "eu",
+          "time": "2030",
+          "value": 234.37947812643432
+        },
+        {
+          "exporter": "row",
+          "importer": "eu",
+          "time": "2035",
+          "value": 208.43396512196972
+        },
+        {
+          "exporter": "row",
+          "importer": "eu",
+          "time": "2040",
+          "value": 188.2379683711538
+        },
+        {
+          "exporter": "row",
+          "importer": "eu",
+          "time": "2045",
+          "value": 0.0
+        },
+        {
+          "exporter": "row",
+          "importer": "row",
+          "time": "2025",
+          "value": 353.38
+        },
+        {
+          "exporter": "row",
+          "importer": "row",
+          "time": "2030",
+          "value": 232.92928618307093
+        },
+        {
+          "exporter": "row",
+          "importer": "row",
+          "time": "2035",
+          "value": 207.20606052566248
+        },
+        {
+          "exporter": "row",
+          "importer": "row",
+          "time": "2040",
+          "value": 187.17271895170572
+        },
+        {
+          "exporter": "row",
+          "importer": "row",
+          "time": "2045",
+          "value": 173.57996563783442
+        },
+        {
+          "exporter": "row",
+          "importer": "us",
+          "time": "2025",
+          "value": 355.69994909493363
+        },
+        {
+          "exporter": "row",
+          "importer": "us",
+          "time": "2030",
+          "value": 234.37951232419863
+        },
+        {
+          "exporter": "row",
+          "importer": "us",
+          "time": "2035",
+          "value": 208.4339651697074
+        },
+        {
+          "exporter": "row",
+          "importer": "us",
+          "time": "2040",
+          "value": 188.2379024304426
+        },
+        {
+          "exporter": "row",
+          "importer": "us",
+          "time": "2045",
+          "value": 0.0
+        },
+        {
+          "exporter": "us",
+          "importer": "af",
+          "time": "2025",
+          "value": 322.5282955880168
+        },
+        {
+          "exporter": "us",
+          "importer": "af",
+          "time": "2030",
+          "value": 212.55333791331162
+        },
+        {
+          "exporter": "us",
+          "importer": "af",
+          "time": "2035",
+          "value": 189.064288744011
+        },
+        {
+          "exporter": "us",
+          "importer": "af",
+          "time": "2040",
+          "value": 170.78821492730393
+        },
+        {
+          "exporter": "us",
+          "importer": "af",
+          "time": "2045",
+          "value": 0.0
+        },
+        {
+          "exporter": "us",
+          "importer": "apac",
+          "time": "2025",
+          "value": 322.528295391277
+        },
+        {
+          "exporter": "us",
+          "importer": "apac",
+          "time": "2030",
+          "value": 212.5533368928082
+        },
+        {
+          "exporter": "us",
+          "importer": "apac",
+          "time": "2035",
+          "value": 189.06428906439777
+        },
+        {
+          "exporter": "us",
+          "importer": "apac",
+          "time": "2040",
+          "value": 170.7882159758687
+        },
+        {
+          "exporter": "us",
+          "importer": "apac",
+          "time": "2045",
+          "value": 0.0
+        },
+        {
+          "exporter": "us",
+          "importer": "ch",
+          "time": "2025",
+          "value": 322.5282954752227
+        },
+        {
+          "exporter": "us",
+          "importer": "ch",
+          "time": "2030",
+          "value": 212.55333624612354
+        },
+        {
+          "exporter": "us",
+          "importer": "ch",
+          "time": "2035",
+          "value": 189.0642889832129
+        },
+        {
+          "exporter": "us",
+          "importer": "ch",
+          "time": "2040",
+          "value": 170.78822037749637
+        },
+        {
+          "exporter": "us",
+          "importer": "ch",
+          "time": "2045",
+          "value": 0.0
+        },
+        {
+          "exporter": "us",
+          "importer": "eu",
+          "time": "2025",
+          "value": 322.5282954382852
+        },
+        {
+          "exporter": "us",
+          "importer": "eu",
+          "time": "2030",
+          "value": 212.5533379860002
+        },
+        {
+          "exporter": "us",
+          "importer": "eu",
+          "time": "2035",
+          "value": 189.06428898461417
+        },
+        {
+          "exporter": "us",
+          "importer": "eu",
+          "time": "2040",
+          "value": 170.8243991581162
+        },
+        {
+          "exporter": "us",
+          "importer": "eu",
+          "time": "2045",
+          "value": 0.0
+        },
+        {
+          "exporter": "us",
+          "importer": "row",
+          "time": "2025",
+          "value": 322.52829557922377
+        },
+        {
+          "exporter": "us",
+          "importer": "row",
+          "time": "2030",
+          "value": 212.55333769782789
+        },
+        {
+          "exporter": "us",
+          "importer": "row",
+          "time": "2035",
+          "value": 189.06428890510043
+        },
+        {
+          "exporter": "us",
+          "importer": "row",
+          "time": "2040",
+          "value": 170.78827736201075
+        },
+        {
+          "exporter": "us",
+          "importer": "row",
+          "time": "2045",
+          "value": 0.0
+        },
+        {
+          "exporter": "us",
+          "importer": "us",
+          "time": "2025",
+          "value": 321.25
+        },
+        {
+          "exporter": "us",
+          "importer": "us",
+          "time": "2030",
+          "value": 211.75090040837495
+        },
+        {
+          "exporter": "us",
+          "importer": "us",
+          "time": "2035",
+          "value": 188.3664806833128
+        },
+        {
+          "exporter": "us",
+          "importer": "us",
+          "time": "2040",
+          "value": 170.1546096644843
+        },
+        {
+          "exporter": "us",
+          "importer": "us",
+          "time": "2045",
+          "value": 157.7977360381298
+        }
+      ]
+    },
+    "capacities": [
+      {
+        "player": "af",
+        "time": "2025",
+        "value": 3.4
+      },
+      {
+        "player": "af",
+        "time": "2030",
+        "value": 0.7772723588204324
+      },
+      {
+        "player": "af",
+        "time": "2035",
+        "value": 0.8019780261546632
+      },
+      {
+        "player": "af",
+        "time": "2040",
+        "value": 0.8849292100987622
+      },
+      {
+        "player": "af",
+        "time": "2045",
+        "value": 0.8874768351766494
+      },
+      {
+        "player": "eu",
+        "time": "2025",
+        "value": 22.0
+      },
+      {
+        "player": "eu",
+        "time": "2030",
+        "value": 0.0005822191449738057
+      },
+      {
+        "player": "eu",
+        "time": "2035",
+        "value": 0.0002470225812511925
+      },
+      {
+        "player": "eu",
+        "time": "2040",
+        "value": 8.032987107022791e-05
+      },
+      {
+        "player": "eu",
+        "time": "2045",
+        "value": 0.00019285493807316516
+      },
+      {
+        "player": "us",
+        "time": "2025",
+        "value": 42.0
+      },
+      {
+        "player": "us",
+        "time": "2030",
+        "value": 0.0032863937698905943
+      },
+      {
+        "player": "us",
+        "time": "2035",
+        "value": 0.002142955230143242
+      },
+      {
+        "player": "us",
+        "time": "2040",
+        "value": 0.0013803485009859537
+      },
+      {
+        "player": "us",
+        "time": "2045",
+        "value": 0.001273411676526124
+      },
+      {
+        "player": "apac",
+        "time": "2025",
+        "value": 110.0
+      },
+      {
+        "player": "apac",
+        "time": "2030",
+        "value": 171.61503545687856
+      },
+      {
+        "player": "apac",
+        "time": "2035",
+        "value": 227.36982982437559
+      },
+      {
+        "player": "apac",
+        "time": "2040",
+        "value": 260.98938304376645
+      },
+      {
+        "player": "apac",
+        "time": "2045",
+        "value": 262.0843641834037
+      },
+      {
+        "player": "row",
+        "time": "2025",
+        "value": 293.0
+      },
+      {
+        "player": "row",
+        "time": "2030",
+        "value": 7.3779076798485335
+      },
+      {
+        "player": "row",
+        "time": "2035",
+        "value": 7.202635975605559
+      },
+      {
+        "player": "row",
+        "time": "2040",
+        "value": 7.197542799102722
+      },
+      {
+        "player": "row",
+        "time": "2045",
+        "value": 7.203041623326298
+      },
+      {
+        "player": "ch",
+        "time": "2025",
+        "value": 931.0
+      },
+      {
+        "player": "ch",
+        "time": "2030",
+        "value": 592.9645867793022
+      },
+      {
+        "player": "ch",
+        "time": "2035",
+        "value": 591.3126501980996
+      },
+      {
+        "player": "ch",
+        "time": "2040",
+        "value": 590.7219561456425
+      },
+      {
+        "player": "ch",
+        "time": "2045",
+        "value": 591.0471733130502
+      }
+    ],
+    "market": {
+      "clearing_prices": [
+        {
+          "region": "ch",
+          "time": "2025",
+          "value": 163.32399999933608
+        },
+        {
+          "region": "ch",
+          "time": "2030",
+          "value": 107.79092378787585
+        },
+        {
+          "region": "ch",
+          "time": "2035",
+          "value": 95.9088330040466
+        },
+        {
+          "region": "ch",
+          "time": "2040",
+          "value": 86.6512572116079
+        },
+        {
+          "region": "eu",
+          "time": "2025",
+          "value": 225.91999279867028
+        },
+        {
+          "region": "eu",
+          "time": "2030",
+          "value": 204.75913681150053
+        },
+        {
+          "region": "eu",
+          "time": "2035",
+          "value": 139.9169446194367
+        },
+        {
+          "region": "eu",
+          "time": "2040",
+          "value": 274.1322135260523
+        },
+        {
+          "region": "us",
+          "time": "2025",
+          "value": 221.68879756223694
+        },
+        {
+          "region": "us",
+          "time": "2030",
+          "value": 189.73911383753045
+        },
+        {
+          "region": "us",
+          "time": "2035",
+          "value": 136.79880910690488
+        },
+        {
+          "region": "us",
+          "time": "2040",
+          "value": 258.6102079291353
+        },
+        {
+          "region": "apac",
+          "time": "2025",
+          "value": 187.5000000137054
+        },
+        {
+          "region": "apac",
+          "time": "2030",
+          "value": 152.6677610328959
+        },
+        {
+          "region": "apac",
+          "time": "2035",
+          "value": 110.01520795570356
+        },
+        {
+          "region": "apac",
+          "time": "2040",
+          "value": 180.27636849048756
+        },
+        {
+          "region": "af",
+          "time": "2025",
+          "value": 216.46374998735388
+        },
+        {
+          "region": "af",
+          "time": "2030",
+          "value": 186.38395927542098
+        },
+        {
+          "region": "af",
+          "time": "2035",
+          "value": 136.17209867098265
+        },
+        {
+          "region": "af",
+          "time": "2040",
+          "value": 234.21610134145845
+        },
+        {
+          "region": "row",
+          "time": "2025",
+          "value": 226.24838742534445
+        },
+        {
+          "region": "row",
+          "time": "2030",
+          "value": 193.56045864934612
+        },
+        {
+          "region": "row",
+          "time": "2035",
+          "value": 141.7074433300279
+        },
+        {
+          "region": "row",
+          "time": "2040",
+          "value": 266.0756478855145
+        }
+      ],
+      "demand": [
+        {
+          "region": "ch",
+          "time": "2025",
+          "value": 323.9999999981709
+        },
+        {
+          "region": "ch",
+          "time": "2030",
+          "value": 349.999999999721
+        },
+        {
+          "region": "ch",
+          "time": "2035",
+          "value": 332.9999999991788
+        },
+        {
+          "region": "ch",
+          "time": "2040",
+          "value": 315.99999999387137
+        },
+        {
+          "region": "eu",
+          "time": "2025",
+          "value": 74.99999999912106
+        },
+        {
+          "region": "eu",
+          "time": "2030",
+          "value": 89.99999999984979
+        },
+        {
+          "region": "eu",
+          "time": "2035",
+          "value": 94.99999999957912
+        },
+        {
+          "region": "eu",
+          "time": "2040",
+          "value": 98.9999999961878
+        },
+        {
+          "region": "us",
+          "time": "2025",
+          "value": 44.999999998101714
+        },
+        {
+          "region": "us",
+          "time": "2030",
+          "value": 64.99999999969243
+        },
+        {
+          "region": "us",
+          "time": "2035",
+          "value": 69.99999999917868
+        },
+        {
+          "region": "us",
+          "time": "2040",
+          "value": 74.99999999116706
+        },
+        {
+          "region": "apac",
+          "time": "2025",
+          "value": 49.99999999813844
+        },
+        {
+          "region": "apac",
+          "time": "2030",
+          "value": 84.9999999997006
+        },
+        {
+          "region": "apac",
+          "time": "2035",
+          "value": 102.9999999991789
+        },
+        {
+          "region": "apac",
+          "time": "2040",
+          "value": 125.99999999255218
+        },
+        {
+          "region": "af",
+          "time": "2025",
+          "value": 9.99999999931573
+        },
+        {
+          "region": "af",
+          "time": "2030",
+          "value": 13.999999999879709
+        },
+        {
+          "region": "af",
+          "time": "2035",
+          "value": 19.999999999650374
+        },
+        {
+          "region": "af",
+          "time": "2040",
+          "value": 27.999999996950535
+        },
+        {
+          "region": "row",
+          "time": "2025",
+          "value": 44.99999999912621
+        },
+        {
+          "region": "row",
+          "time": "2030",
+          "value": 69.9999999998524
+        },
+        {
+          "region": "row",
+          "time": "2035",
+          "value": 78.99999999957905
+        },
+        {
+          "region": "row",
+          "time": "2040",
+          "value": 88.99999999623982
+        }
+      ],
+      "trade_flows": [
+        {
+          "exporter": "ch",
+          "importer": "ch",
+          "time": "2025",
+          "value": 323.99999995959206
+        },
+        {
+          "exporter": "ch",
+          "importer": "ch",
+          "time": "2030",
+          "value": 349.9999999940913
+        },
+        {
+          "exporter": "ch",
+          "importer": "ch",
+          "time": "2035",
+          "value": 332.9999999706739
+        },
+        {
+          "exporter": "ch",
+          "importer": "ch",
+          "time": "2040",
+          "value": 315.9999999166821
+        },
+        {
+          "exporter": "ch",
+          "importer": "eu",
+          "time": "2025",
+          "value": 71.6000012698818
+        },
+        {
+          "exporter": "ch",
+          "importer": "eu",
+          "time": "2030",
+          "value": 89.22214547078424
+        },
+        {
+          "exporter": "ch",
+          "importer": "eu",
+          "time": "2035",
+          "value": 94.99999885532542
+        },
+        {
+          "exporter": "ch",
+          "importer": "eu",
+          "time": "2040",
+          "value": 3.9212951036379214e-06
+        },
+        {
+          "exporter": "ch",
+          "importer": "us",
+          "time": "2025",
+          "value": 4.6946291367692446e-06
+        },
+        {
+          "exporter": "ch",
+          "importer": "us",
+          "time": "2030",
+          "value": 1.2472087263441768e-07
+        },
+        {
+          "exporter": "ch",
+          "importer": "us",
+          "time": "2035",
+          "value": 69.99999619927782
+        },
+        {
+          "exporter": "ch",
+          "importer": "us",
+          "time": "2040",
+          "value": 38.12422330434393
+        },
+        {
+          "exporter": "ch",
+          "importer": "apac",
+          "time": "2025",
+          "value": 3.065185519706377e-07
+        },
+        {
+          "exporter": "ch",
+          "importer": "apac",
+          "time": "2030",
+          "value": 1.407404589801745e-08
+        },
+        {
+          "exporter": "ch",
+          "importer": "apac",
+          "time": "2035",
+          "value": 5.528154828469432e-08
+        },
+        {
+          "exporter": "ch",
+          "importer": "apac",
+          "time": "2040",
+          "value": 6.823091639596168e-08
+        },
+        {
+          "exporter": "ch",
+          "importer": "af",
+          "time": "2025",
+          "value": 9.999998446433983
+        },
+        {
+          "exporter": "ch",
+          "importer": "af",
+          "time": "2030",
+          "value": 13.999999940030621
+        },
+        {
+          "exporter": "ch",
+          "importer": "af",
+          "time": "2035",
+          "value": 19.19802198925438
+        },
+        {
+          "exporter": "ch",
+          "importer": "af",
+          "time": "2040",
+          "value": 27.999999453694432
+        },
+        {
+          "exporter": "ch",
+          "importer": "row",
+          "time": "2025",
+          "value": 44.999980349760285
+        },
+        {
+          "exporter": "ch",
+          "importer": "row",
+          "time": "2030",
+          "value": 48.38496439891699
+        },
+        {
+          "exporter": "ch",
+          "importer": "row",
+          "time": "2035",
+          "value": 1.6985517482756305e-07
+        },
+        {
+          "exporter": "ch",
+          "importer": "row",
+          "time": "2040",
+          "value": 81.80245770238993
+        },
+        {
+          "exporter": "eu",
+          "importer": "ch",
+          "time": "2025",
+          "value": 4.066558437439974e-09
+        },
+        {
+          "exporter": "eu",
+          "importer": "ch",
+          "time": "2030",
+          "value": 8.210359686368567e-10
+        },
+        {
+          "exporter": "eu",
+          "importer": "ch",
+          "time": "2035",
+          "value": 4.6694281036410616e-09
+        },
+        {
+          "exporter": "eu",
+          "importer": "ch",
+          "time": "2040",
+          "value": 1.2551796934057906e-08
+        },
+        {
+          "exporter": "eu",
+          "importer": "eu",
+          "time": "2025",
+          "value": 7.954133349588014e-09
+        },
+        {
+          "exporter": "eu",
+          "importer": "eu",
+          "time": "2030",
+          "value": 0.0005822013737266269
+        },
+        {
+          "exporter": "eu",
+          "importer": "eu",
+          "time": "2035",
+          "value": 8.629336259813399e-10
+        },
+        {
+          "exporter": "eu",
+          "importer": "eu",
+          "time": "2040",
+          "value": 8.009557461244302e-05
+        },
+        {
+          "exporter": "eu",
+          "importer": "us",
+          "time": "2025",
+          "value": 6.1107737810730165e-09
+        },
+        {
+          "exporter": "eu",
+          "importer": "us",
+          "time": "2030",
+          "value": 2.92276391286295e-09
+        },
+        {
+          "exporter": "eu",
+          "importer": "us",
+          "time": "2035",
+          "value": 6.107129006520687e-09
+        },
+        {
+          "exporter": "eu",
+          "importer": "us",
+          "time": "2040",
+          "value": 9.128977510256359e-08
+        },
+        {
+          "exporter": "eu",
+          "importer": "apac",
+          "time": "2025",
+          "value": 4.639147353950506e-09
+        },
+        {
+          "exporter": "eu",
+          "importer": "apac",
+          "time": "2030",
+          "value": 1.2492116734080537e-09
+        },
+        {
+          "exporter": "eu",
+          "importer": "apac",
+          "time": "2035",
+          "value": 5.187767917566476e-09
+        },
+        {
+          "exporter": "eu",
+          "importer": "apac",
+          "time": "2040",
+          "value": 2.1841208883004048e-08
+        },
+        {
+          "exporter": "eu",
+          "importer": "af",
+          "time": "2025",
+          "value": 6.768801828284228e-09
+        },
+        {
+          "exporter": "eu",
+          "importer": "af",
+          "time": "2030",
+          "value": 3.770870607436676e-09
+        },
+        {
+          "exporter": "eu",
+          "importer": "af",
+          "time": "2035",
+          "value": 5.765611991044451e-09
+        },
+        {
+          "exporter": "eu",
+          "importer": "af",
+          "time": "2040",
+          "value": 5.928928088258258e-08
+        },
+        {
+          "exporter": "eu",
+          "importer": "row",
+          "time": "2025",
+          "value": 7.109608287014174e-09
+        },
+        {
+          "exporter": "eu",
+          "importer": "row",
+          "time": "2030",
+          "value": 6.2483508996317095e-09
+        },
+        {
+          "exporter": "eu",
+          "importer": "row",
+          "time": "2035",
+          "value": 4.437185938056732e-09
+        },
+        {
+          "exporter": "eu",
+          "importer": "row",
+          "time": "2040",
+          "value": 2.7969848666030023e-08
+        },
+        {
+          "exporter": "us",
+          "importer": "ch",
+          "time": "2025",
+          "value": 3.5016941991620415e-09
+        },
+        {
+          "exporter": "us",
+          "importer": "ch",
+          "time": "2030",
+          "value": 8.264081438130488e-10
+        },
+        {
+          "exporter": "us",
+          "importer": "ch",
+          "time": "2035",
+          "value": 2.2356852104795428e-09
+        },
+        {
+          "exporter": "us",
+          "importer": "ch",
+          "time": "2040",
+          "value": 1.2540145628078458e-08
+        },
+        {
+          "exporter": "us",
+          "importer": "eu",
+          "time": "2025",
+          "value": 5.9932662657205915e-09
+        },
+        {
+          "exporter": "us",
+          "importer": "eu",
+          "time": "2030",
+          "value": 5.639160620513101e-09
+        },
+        {
+          "exporter": "us",
+          "importer": "eu",
+          "time": "2035",
+          "value": 2.7479311440303666e-09
+        },
+        {
+          "exporter": "us",
+          "importer": "eu",
+          "time": "2040",
+          "value": 0.0013798218908073895
+        },
+        {
+          "exporter": "us",
+          "importer": "us",
+          "time": "2025",
+          "value": 6.340792051394029e-09
+        },
+        {
+          "exporter": "us",
+          "importer": "us",
+          "time": "2030",
+          "value": 4.6039841318494506e-09
+        },
+        {
+          "exporter": "us",
+          "importer": "us",
+          "time": "2035",
+          "value": 2.8036803099912124e-09
+        },
+        {
+          "exporter": "us",
+          "importer": "us",
+          "time": "2040",
+          "value": 2.655304561990133e-07
+        },
+        {
+          "exporter": "us",
+          "importer": "apac",
+          "time": "2025",
+          "value": 4.242799565868362e-09
+        },
+        {
+          "exporter": "us",
+          "importer": "apac",
+          "time": "2030",
+          "value": 1.4338203899663263e-09
+        },
+        {
+          "exporter": "us",
+          "importer": "apac",
+          "time": "2035",
+          "value": 2.440318789034885e-09
+        },
+        {
+          "exporter": "us",
+          "importer": "apac",
+          "time": "2040",
+          "value": 2.5785494376413472e-08
+        },
+        {
+          "exporter": "us",
+          "importer": "af",
+          "time": "2025",
+          "value": 5.313470184214769e-09
+        },
+        {
+          "exporter": "us",
+          "importer": "af",
+          "time": "2030",
+          "value": 2.650834128922169e-09
+        },
+        {
+          "exporter": "us",
+          "importer": "af",
+          "time": "2035",
+          "value": 2.694801169314325e-09
+        },
+        {
+          "exporter": "us",
+          "importer": "af",
+          "time": "2040",
+          "value": 5.471891569358274e-08
+        },
+        {
+          "exporter": "us",
+          "importer": "row",
+          "time": "2025",
+          "value": 5.7095565794634385e-09
+        },
+        {
+          "exporter": "us",
+          "importer": "row",
+          "time": "2030",
+          "value": 3.1735361349850963e-09
+        },
+        {
+          "exporter": "us",
+          "importer": "row",
+          "time": "2035",
+          "value": 2.7303745933099574e-09
+        },
+        {
+          "exporter": "us",
+          "importer": "row",
+          "time": "2040",
+          "value": 1.4068128937836544e-07
+        },
+        {
+          "exporter": "apac",
+          "importer": "ch",
+          "time": "2025",
+          "value": 1.6779993428342877e-08
+        },
+        {
+          "exporter": "apac",
+          "importer": "ch",
+          "time": "2030",
+          "value": 1.8993881314787245e-09
+        },
+        {
+          "exporter": "apac",
+          "importer": "ch",
+          "time": "2035",
+          "value": 1.1950940557739586e-08
+        },
+        {
+          "exporter": "apac",
+          "importer": "ch",
+          "time": "2040",
+          "value": 2.42318379931154e-08
+        },
+        {
+          "exporter": "apac",
+          "importer": "eu",
+          "time": "2025",
+          "value": 2.508191351923718e-07
+        },
+        {
+          "exporter": "apac",
+          "importer": "eu",
+          "time": "2030",
+          "value": 1.3038112283085679e-08
+        },
+        {
+          "exporter": "apac",
+          "importer": "eu",
+          "time": "2035",
+          "value": 1.0358656435338225e-06
+        },
+        {
+          "exporter": "apac",
+          "importer": "eu",
+          "time": "2040",
+          "value": 98.11360534530306
+        },
+        {
+          "exporter": "apac",
+          "importer": "us",
+          "time": "2025",
+          "value": 44.99999519728168
+        },
+        {
+          "exporter": "apac",
+          "importer": "us",
+          "time": "2030",
+          "value": 64.99999985566069
+        },
+        {
+          "exporter": "apac",
+          "importer": "us",
+          "time": "2035",
+          "value": 3.7538717423914926e-06
+        },
+        {
+          "exporter": "apac",
+          "importer": "us",
+          "time": "2040",
+          "value": 36.87577603776777
+        },
+        {
+          "exporter": "apac",
+          "importer": "apac",
+          "time": "2025",
+          "value": 49.99999966080993
+        },
+        {
+          "exporter": "apac",
+          "importer": "apac",
+          "time": "2030",
+          "value": 84.99999997940667
+        },
+        {
+          "exporter": "apac",
+          "importer": "apac",
+          "time": "2035",
+          "value": 102.9999999241576
+        },
+        {
+          "exporter": "apac",
+          "importer": "apac",
+          "time": "2040",
+          "value": 125.9999998239204
+        },
+        {
+          "exporter": "apac",
+          "importer": "af",
+          "time": "2025",
+          "value": 6.250418794193766e-07
+        },
+        {
+          "exporter": "apac",
+          "importer": "af",
+          "time": "2030",
+          "value": 3.133380349386309e-08
+        },
+        {
+          "exporter": "apac",
+          "importer": "af",
+          "time": "2035",
+          "value": 2.603716003282597e-07
+        },
+        {
+          "exporter": "apac",
+          "importer": "af",
+          "time": "2040",
+          "value": 2.8746547319566065e-07
+        },
+        {
+          "exporter": "apac",
+          "importer": "row",
+          "time": "2025",
+          "value": 1.913810501147937e-05
+        },
+        {
+          "exporter": "apac",
+          "importer": "row",
+          "time": "2030",
+          "value": 21.615035571596128
+        },
+        {
+          "exporter": "apac",
+          "importer": "row",
+          "time": "2035",
+          "value": 78.99999968825163
+        },
+        {
+          "exporter": "apac",
+          "importer": "row",
+          "time": "2040",
+          "value": 1.4918870123396566e-06
+        },
+        {
+          "exporter": "af",
+          "importer": "ch",
+          "time": "2025",
+          "value": 1.106422220134139e-08
+        },
+        {
+          "exporter": "af",
+          "importer": "ch",
+          "time": "2030",
+          "value": 1.284394033901774e-09
+        },
+        {
+          "exporter": "af",
+          "importer": "ch",
+          "time": "2035",
+          "value": 6.904929023002226e-09
+        },
+        {
+          "exporter": "af",
+          "importer": "ch",
+          "time": "2040",
+          "value": 1.4127905576802145e-08
+        },
+        {
+          "exporter": "af",
+          "importer": "eu",
+          "time": "2025",
+          "value": 3.3999984597757966
+        },
+        {
+          "exporter": "af",
+          "importer": "eu",
+          "time": "2030",
+          "value": 0.7772723061518555
+        },
+        {
+          "exporter": "af",
+          "importer": "eu",
+          "time": "2035",
+          "value": 1.0028118824174671e-07
+        },
+        {
+          "exporter": "af",
+          "importer": "eu",
+          "time": "2040",
+          "value": 0.8849284986237668
+        },
+        {
+          "exporter": "af",
+          "importer": "us",
+          "time": "2025",
+          "value": 8.939636944162186e-08
+        },
+        {
+          "exporter": "af",
+          "importer": "us",
+          "time": "2030",
+          "value": 9.91024804184887e-09
+        },
+        {
+          "exporter": "af",
+          "importer": "us",
+          "time": "2035",
+          "value": 3.308131629341246e-08
+        },
+        {
+          "exporter": "af",
+          "importer": "us",
+          "time": "2040",
+          "value": 1.786115809384088e-07
+        },
+        {
+          "exporter": "af",
+          "importer": "apac",
+          "time": "2025",
+          "value": 1.849751136803741e-08
+        },
+        {
+          "exporter": "af",
+          "importer": "apac",
+          "time": "2030",
+          "value": 2.4425307458260562e-09
+        },
+        {
+          "exporter": "af",
+          "importer": "apac",
+          "time": "2035",
+          "value": 9.18200488253985e-09
+        },
+        {
+          "exporter": "af",
+          "importer": "apac",
+          "time": "2040",
+          "value": 2.817554018381737e-08
+        },
+        {
+          "exporter": "af",
+          "importer": "af",
+          "time": "2025",
+          "value": 9.11692893922921e-07
+        },
+        {
+          "exporter": "af",
+          "importer": "af",
+          "time": "2030",
+          "value": 2.027094200378605e-08
+        },
+        {
+          "exporter": "af",
+          "importer": "af",
+          "time": "2035",
+          "value": 0.8019777375049849
+        },
+        {
+          "exporter": "af",
+          "importer": "af",
+          "time": "2040",
+          "value": 8.530136202617998e-08
+        },
+        {
+          "exporter": "af",
+          "importer": "row",
+          "time": "2025",
+          "value": 4.934070946510066e-07
+        },
+        {
+          "exporter": "af",
+          "importer": "row",
+          "time": "2030",
+          "value": 1.7156807592797015e-08
+        },
+        {
+          "exporter": "af",
+          "importer": "row",
+          "time": "2035",
+          "value": 1.2905480133759452e-07
+        },
+        {
+          "exporter": "af",
+          "importer": "row",
+          "time": "2040",
+          "value": 3.8970999870089145e-07
+        },
+        {
+          "exporter": "row",
+          "importer": "ch",
+          "time": "2025",
+          "value": 3.166419671632616e-09
+        },
+        {
+          "exporter": "row",
+          "importer": "ch",
+          "time": "2030",
+          "value": 7.984199626083605e-10
+        },
+        {
+          "exporter": "row",
+          "importer": "ch",
+          "time": "2035",
+          "value": 2.7439064101398173e-09
+        },
+        {
+          "exporter": "row",
+          "importer": "ch",
+          "time": "2040",
+          "value": 1.3737652178820214e-08
+        },
+        {
+          "exporter": "row",
+          "importer": "eu",
+          "time": "2025",
+          "value": 4.696926421565099e-09
+        },
+        {
+          "exporter": "row",
+          "importer": "eu",
+          "time": "2030",
+          "value": 2.8627012876174616e-09
+        },
+        {
+          "exporter": "row",
+          "importer": "eu",
+          "time": "2035",
+          "value": 4.496009367032854e-09
+        },
+        {
+          "exporter": "row",
+          "importer": "eu",
+          "time": "2040",
+          "value": 2.3135004616510145e-06
+        },
+        {
+          "exporter": "row",
+          "importer": "us",
+          "time": "2025",
+          "value": 4.342965017297409e-09
+        },
+        {
+          "exporter": "row",
+          "importer": "us",
+          "time": "2030",
+          "value": 1.8738823709113456e-09
+        },
+        {
+          "exporter": "row",
+          "importer": "us",
+          "time": "2035",
+          "value": 4.037005019686246e-09
+        },
+        {
+          "exporter": "row",
+          "importer": "us",
+          "time": "2040",
+          "value": 1.1362355424143436e-07
+        },
+        {
+          "exporter": "row",
+          "importer": "apac",
+          "time": "2025",
+          "value": 3.4305069705261997e-09
+        },
+        {
+          "exporter": "row",
+          "importer": "apac",
+          "time": "2030",
+          "value": 1.0943224296248065e-09
+        },
+        {
+          "exporter": "row",
+          "importer": "apac",
+          "time": "2035",
+          "value": 2.929654536714979e-09
+        },
+        {
+          "exporter": "row",
+          "importer": "apac",
+          "time": "2040",
+          "value": 2.459863548572929e-08
+        },
+        {
+          "exporter": "row",
+          "importer": "af",
+          "time": "2025",
+          "value": 4.064701707135595e-09
+        },
+        {
+          "exporter": "row",
+          "importer": "af",
+          "time": "2030",
+          "value": 1.8226346258676622e-09
+        },
+        {
+          "exporter": "row",
+          "importer": "af",
+          "time": "2035",
+          "value": 4.058993066889276e-09
+        },
+        {
+          "exporter": "row",
+          "importer": "af",
+          "time": "2040",
+          "value": 5.6481069935155363e-08
+        },
+        {
+          "exporter": "row",
+          "importer": "row",
+          "time": "2025",
+          "value": 5.034659865954052e-09
+        },
+        {
+          "exporter": "row",
+          "importer": "row",
+          "time": "2030",
+          "value": 2.7605728423220762e-09
+        },
+        {
+          "exporter": "row",
+          "importer": "row",
+          "time": "2035",
+          "value": 5.249885242022346e-09
+        },
+        {
+          "exporter": "row",
+          "importer": "row",
+          "time": "2040",
+          "value": 7.19754024360175
+        }
+      ]
+    }
+  }
+}

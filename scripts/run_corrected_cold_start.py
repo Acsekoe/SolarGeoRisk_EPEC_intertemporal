@@ -89,11 +89,14 @@ def _matrix(data: Any, values: dict[tuple[str, str], float]) -> dict[str, dict[s
 
 def _build_fresh_state(data: Any) -> dict[str, dict[tuple[str, ...], float]]:
     times = list(data.times)
+    operating_times = set(model_it._operating_times(data))
     move_times = model_it._move_times(times)
     initial_capacity = model_it._initial_capacity_by_region(data)
     return {
         "Q_offer": {
-            (region, period): float(initial_capacity[region])
+            (region, period): (
+                float(initial_capacity[region]) if period in operating_times else 0.0
+            )
             for region in data.players
             for period in times
         },
@@ -103,13 +106,19 @@ def _build_fresh_state(data: Any) -> dict[str, dict[tuple[str, ...], float]]:
             for period in move_times
         },
         "p_offer": {
-            (exporter, importer, period): float(data.c_man[exporter])
+            (exporter, importer, period): (
+                float(data.c_man[exporter]) if period in operating_times else 0.0
+            )
             for exporter in data.regions
             for importer in data.regions
             for period in times
         },
         "a_bid": {
-            (region, period): float(data.a_dem_t[(region, period)])
+            (region, period): (
+                float(data.a_dem_t[(region, period)])
+                if period in operating_times
+                else 0.0
+            )
             for region in data.regions
             for period in times
         },
@@ -177,6 +186,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--order", default=",".join(DEFAULT_ORDER))
     parser.add_argument("--iters", type=int, default=30)
+    parser.add_argument("--terminal-salvage-fraction", type=float, default=0.5)
     parser.add_argument("--log-path", type=Path)
     return parser.parse_args()
 
@@ -188,6 +198,8 @@ def main() -> int:
     order = [item.strip().lower() for item in args.order.split(",") if item.strip()]
     if len(order) != len(set(order)):
         raise ValueError(f"Player order contains duplicates: {order}")
+    if args.terminal_salvage_fraction < 0.0:
+        raise ValueError("terminal-salvage-fraction must be non-negative")
     if not input_path.is_file():
         raise FileNotFoundError(input_path)
     if output_dir.exists():
@@ -197,6 +209,8 @@ def main() -> int:
     start_clock = time.perf_counter()
 
     data = load_data_from_excel(str(input_path), params_region_sheet=PARAMS_SHEET)
+    data.settings = dict(data.settings or {})
+    data.settings["terminal_capacity_state_only"] = True
     if order != list(dict.fromkeys(order)) or set(order) != set(data.players):
         raise ValueError(f"Order must contain every player exactly once. Got {order}; players={data.players}")
     initial_state = _build_fresh_state(data)
@@ -239,7 +253,8 @@ def main() -> int:
         c_quad_a=0.1,
         cap_keep_reward=0.0,
         capex_subsidy=0.0,
-        terminal_capacity_value=0.0,
+        terminal_salvage_fraction=float(args.terminal_salvage_fraction),
+        terminal_capacity_state_only=True,
         decommission_penalty=0.0,
         fix_q_offer_to_kcap=True,
         force_mu_offer_zero=False,
@@ -270,7 +285,9 @@ def main() -> int:
             "a_dem": _matrix(data, data.a_dem_t),
             "b_dem": _matrix(data, data.b_dem_t),
             "validation": "passed in model.data_prep.load_data_from_excel before model construction",
-            "terminal_2045": "inherits 2040 Dmax, a_dem, and b_dem",
+            "operating_periods": model_it._operating_times(data),
+            "terminal_capacity_state": list(data.times)[-1],
+            "terminal_market": "inactive; no terminal demand, production, trade, prices, or operating payoff",
         },
         "player_order": order,
         "algorithm": _config_payload(cfg),

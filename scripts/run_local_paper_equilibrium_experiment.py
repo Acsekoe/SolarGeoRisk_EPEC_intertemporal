@@ -83,6 +83,7 @@ def paper_state():
 
 def full_state_payload(data, state: dict[str, dict], market: dict[str, dict] | None = None):
     capacities = mm._implied_capacity_path(data, list(data.times or []), state["dK_net"])
+    operating_times = mm._operating_times(data)
     payload = {
         "strategy": _serialize_state(state),
         "capacities": [
@@ -94,15 +95,15 @@ def full_state_payload(data, state: dict[str, dict], market: dict[str, dict] | N
         payload["market"] = {
             "clearing_prices": [
                 {"region": r, "time": t, "value": float(market["lam"][(r, t)])}
-                for r in data.regions for t in list(data.times or [])
+                for r in data.regions for t in operating_times
             ],
             "demand": [
                 {"region": r, "time": t, "value": float(market["x_dem"][(r, t)])}
-                for r in data.regions for t in list(data.times or [])
+                for r in data.regions for t in operating_times
             ],
             "trade_flows": [
                 {"exporter": e, "importer": i, "time": t, "value": float(market["x"][(e, i, t)])}
-                for e in data.regions for i in data.regions for t in list(data.times or [])
+                for e in data.regions for i in data.regions for t in operating_times
             ],
         }
     return payload
@@ -115,7 +116,9 @@ def player_strategy_payload(data, state, player):
         "capacities": {t: float(caps[(player, t)]) for t in list(data.times or [])},
         "offer_prices": {
             f"{importer}/{t}": float(state["p_offer"][(player, importer, t)])
-            for importer in data.regions if importer != player for t in list(data.times or [])
+            for importer in data.regions
+            if importer != player
+            for t in mm._operating_times(data)
         },
     }
 
@@ -160,7 +163,7 @@ def make_initialization(data, paper, branch: str):
             for i in data.regions:
                 if e == i:
                     continue
-                for t in times:
+                for t in mm._operating_times(data):
                     key = (e, i, t)
                     upper = float(data.p_offer_ub[(e, i)])
                     state["p_offer"][key] = float(
@@ -172,7 +175,7 @@ def make_initialization(data, paper, branch: str):
             for i in data.regions:
                 if e == i:
                     continue
-                for t in times:
+                for t in mm._operating_times(data):
                     key = (e, i, t)
                     cost = float((data.c_man_t or {}).get((e, t), data.c_man[e]))
                     state["p_offer"][key] = (1.0 - weight) * float(paper["p_offer"][key]) + weight * cost
@@ -194,7 +197,7 @@ def vector_and_scales(data, state, player: str | None = None):
         for i in data.regions:
             if i == p:
                 continue
-            for t in list(data.times or []):
+            for t in mm._operating_times(data):
                 values.append(float(state["p_offer"][(p, i, t)]))
                 scales.append(max(float(data.p_offer_ub[(p, i)]), 1.0)); labels.append(f"p_offer[{p},{i},{t}]")
     return np.asarray(values), np.asarray(scales), labels
@@ -331,7 +334,7 @@ def run_branch(data, paper, branch: str, *, alpha: float, max_sweeps: int, start
             for importer in data.regions:
                 if importer == player:
                     continue
-                for t in list(data.times or []):
+                for t in mm._operating_times(data):
                     key = (player, importer, t); state["p_offer"][key] = (1.0-alpha)*before_player["p_offer"][key] + alpha*raw["p_offer"][key]
             _sync_quantity(data, state)
             post_market, post_market_diag = solve_nested_market(data, state)

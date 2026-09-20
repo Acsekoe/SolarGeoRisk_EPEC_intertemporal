@@ -33,7 +33,7 @@ def nested_economic_objective(
 ) -> float:
     """Evaluate welfare using the model's KKT substitution for producer revenue."""
     value = _economic_objective(data, candidate, market_state, player)
-    for tp in list(data.times or []):
+    for tp in mm._operating_times(data):
         weight = float((data.beta_t or {}).get(tp, 1.0)) * float(
             (data.years_to_next or {}).get(tp, 1.0)
         )
@@ -60,6 +60,7 @@ def solve_nested_market(
 ) -> tuple[dict[str, dict], dict[str, float]]:
     regions = list(data.regions)
     times = list(data.times or [])
+    operating_times = mm._operating_times(data)
     routes = [(exporter, importer) for exporter in regions for importer in regions]
     n_flow = len(routes)
     n_dem = len(regions)
@@ -82,7 +83,7 @@ def solve_nested_market(
     max_stationarity = 0.0
     total_iterations = 0
 
-    for tp in times:
+    for tp in operating_times:
         linear_cost = np.array(
             [
                 float(candidate["p_offer"][(exporter, importer, tp)])
@@ -189,6 +190,21 @@ def solve_nested_market(
         for exporter_pos, exporter in enumerate(regions):
             market_state["mu_offer"][(exporter, tp)] = max(float(mu[exporter_pos]), 0.0)
 
+    # Keep payloads backward-compatible while making clear that the final time
+    # label is a capacity state only and has no market outcome.
+    for tp in times:
+        if tp in operating_times:
+            continue
+        for exporter in regions:
+            market_state["mu_offer"][(exporter, tp)] = 0.0
+            market_state["x_dem"][(exporter, tp)] = 0.0
+            market_state["lam"][(exporter, tp)] = 0.0
+            market_state["beta_dem"][(exporter, tp)] = 0.0
+            market_state["psi_dem"][(exporter, tp)] = 0.0
+            for importer in regions:
+                market_state["x"][(exporter, importer, tp)] = 0.0
+                market_state["gamma"][(exporter, importer, tp)] = 0.0
+
     diagnostics = {
         "max_balance_residual": max_eq,
         "max_capacity_violation": max_cap,
@@ -226,10 +242,13 @@ def nested_best_response(
     exact same candidate, bounds, and reference objective.
     """
     times = list(data.times or [])
+    operating_times = mm._operating_times(data)
     move_times = mm._move_times(times)
     importers = [importer for importer in data.regions if importer != player]
     price_keys = [
-        (player, importer, tp) for importer in importers for tp in times
+        (player, importer, tp)
+        for importer in importers
+        for tp in operating_times
     ]
     dk_keys = [(player, tp) for tp in move_times]
     x0 = np.array(
@@ -290,7 +309,11 @@ def nested_best_response(
             state["p_offer"][key] = float(vector[offset + index])
         kcap = mm._implied_capacity_path(data, times, state["dK_net"])
         state["Q_offer"] = {
-            (region, tp): max(float(kcap[(region, tp)]), 0.0)
+            (region, tp): (
+                max(float(kcap[(region, tp)]), 0.0)
+                if tp in operating_times
+                else 0.0
+            )
             for region in data.players
             for tp in times
         }
@@ -300,7 +323,7 @@ def nested_best_response(
         if not any(value != 0.0 for value in prox.values()):
             return 0.0
         value = 0.0
-        for tp in times:
+        for tp in operating_times:
             weight = float((data.beta_t or {}).get(tp, 1.0)) * float(
                 (data.years_to_next or {}).get(tp, 1.0)
             )
@@ -574,7 +597,7 @@ def main() -> None:
                     f"{importer}/{tp}": best_state["p_offer"][(player, importer, tp)]
                     for importer in data.regions
                     if importer != player
-                    for tp in list(data.times or [])
+                    for tp in mm._operating_times(data)
                 },
             }
             records.append(record)

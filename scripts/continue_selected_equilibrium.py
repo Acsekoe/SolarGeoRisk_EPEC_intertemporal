@@ -77,8 +77,12 @@ def _strategy_residual(
 ) -> float:
     times = list(data.times or [])
     move_times = mm._move_times(times)
-    conv_times = times[:-1]
-    conv_move_times = move_times[:-1]
+    if mm._terminal_capacity_state_only(data):
+        conv_times = mm._operating_times(data)
+        conv_move_times = move_times
+    else:
+        conv_times = times[:-1]
+        conv_move_times = move_times[:-1]
     initial_capacity = mm._initial_capacity_by_region(data)
     residual = 0.0
 
@@ -334,7 +338,7 @@ def run_blocks(blocks: int) -> None:
             c_quad_a=0.1,
             cap_keep_reward=0.0,
             capex_subsidy=0.0,
-            terminal_capacity_value=0.0,
+            terminal_salvage_fraction=0.0,
             decommission_penalty=0.0,
             fix_q_offer_to_kcap=True,
             force_mu_offer_zero=False,

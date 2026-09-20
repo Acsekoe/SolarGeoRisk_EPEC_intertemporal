@@ -131,7 +131,11 @@ def _candidate_state(
     return data, base_cfg, state, warm, f"continuation_after_{len(manifest.get('runs', []))}_blocks"
 
 
-def _zero_prox_data(base_cfg: run_gs.RunConfig) -> mm.ModelData:
+def _zero_prox_data(
+    base_cfg: run_gs.RunConfig,
+    *,
+    terminal_salvage_fraction: float = 0.0,
+) -> mm.ModelData:
     cfg = run_gs.RunConfig(
         excel_path=base_cfg.excel_path,
         params_region_sheet="params_region_new",
@@ -157,7 +161,8 @@ def _zero_prox_data(base_cfg: run_gs.RunConfig) -> mm.ModelData:
         c_quad_a=0.1,
         cap_keep_reward=0.0,
         capex_subsidy=0.0,
-        terminal_capacity_value=0.0,
+        terminal_salvage_fraction=terminal_salvage_fraction,
+        terminal_capacity_state_only=base_cfg.terminal_capacity_state_only,
         decommission_penalty=0.0,
         fix_q_offer_to_kcap=True,
         force_mu_offer_zero=False,
@@ -172,22 +177,25 @@ def _zero_prox_data(base_cfg: run_gs.RunConfig) -> mm.ModelData:
 
 def _set_levels(ctx: mm.ModelContext, data: mm.ModelData, state: dict[str, dict]) -> None:
     times = list(data.times or [])
+    operating_times = set(mm._operating_times(data))
     move_times = mm._move_times(times)
     d_k = state.get("dK_net", {})
     kcap = mm._implied_capacity_path(data, times, d_k)
 
     for (r, tp), value in kcap.items():
         ctx.vars["Kcap"].l[r, tp] = max(float(value), 0.0)
-        ctx.vars["Q_offer"].l[r, tp] = max(float(value), 0.0)
+        if tp in operating_times:
+            ctx.vars["Q_offer"].l[r, tp] = max(float(value), 0.0)
     for r in data.players:
         for tp in move_times:
             value = float(d_k.get((r, tp), 0.0))
             ctx.vars["Icap_pos"].l[r, tp] = max(value, 0.0)
             ctx.vars["Dcap_neg"].l[r, tp] = max(-value, 0.0)
     for (ex, im, tp), value in state.get("p_offer", {}).items():
-        ctx.vars["p_offer"].l[ex, im, tp] = float(value)
+        if tp in operating_times:
+            ctx.vars["p_offer"].l[ex, im, tp] = float(value)
     for r in data.players:
-        for tp in times:
+        for tp in operating_times:
             ctx.vars["a_bid"].l[r, tp] = mm._true_demand_intercept(data, r, tp)
 
     # A reference solve can also seed all lower-level variables for the best response.
@@ -210,11 +218,12 @@ def _fix_candidate_player(
     player: str,
 ) -> None:
     times = list(data.times or [])
+    operating_times = mm._operating_times(data)
     move_times = mm._move_times(times)
     d_k = candidate["dK_net"]
     kcap = mm._implied_capacity_path(data, times, d_k)
 
-    for tp in times:
+    for tp in operating_times:
         kval = max(float(kcap[(player, tp)]), 0.0)
         ctx.vars["Kcap"].l[player, tp] = kval
         ctx.vars["Kcap"].lo[player, tp] = kval
@@ -331,6 +340,7 @@ def _strategy_distance(
     player: str,
 ) -> tuple[float, str, float]:
     times = list(data.times or [])
+    operating_times = mm._operating_times(data)
     move_times = mm._move_times(times)
     initial_capacity = mm._initial_capacity_by_region(data)
     exp_scale = float((data.g_exp_ub or {}).get(player, 0.0))
@@ -350,7 +360,7 @@ def _strategy_distance(
         if importer == player:
             continue
         scale = max(float(data.p_offer_ub[(player, importer)]), 1e-3)
-        for tp in times:
+        for tp in operating_times:
             key = (player, importer, tp)
             absolute = float(best_response["p_offer"][key]) - float(candidate["p_offer"][key])
             scaled = abs(absolute) / scale
@@ -435,9 +445,10 @@ def _economic_objective(
     player: str,
 ) -> float:
     times = list(data.times or [])
+    operating_times = mm._operating_times(data)
     kcap = mm._implied_capacity_path(data, times, candidate["dK_net"])
     value = 0.0
-    for tp in times:
+    for tp in operating_times:
         beta = float((data.beta_t or {}).get(tp, 1.0))
         years = float((data.years_to_next or {}).get(tp, 1.0))
         weight = beta * years
@@ -463,6 +474,11 @@ def _economic_objective(
             investment = max(float(candidate["dK_net"][(player, tp)]), 0.0)
             period -= float((data.c_inv or {})[player]) * investment
         value += weight * period
+    value += mm._terminal_salvage_credit(
+        data,
+        player,
+        kcap[(player, times[-1])],
+    )
     return value
 
 
@@ -480,9 +496,10 @@ def _solve_market_reference(
         _set_levels(ctx, data, checkpoint_warm)
         _set_levels(ctx, data, candidate)
         times = list(data.times or [])
+        operating_times = mm._operating_times(data)
         kcap = mm._implied_capacity_path(data, times, candidate["dK_net"])
         for exporter in data.regions:
-            for tp in times:
+            for tp in operating_times:
                 qval = max(float(kcap[(exporter, tp)]), 0.0)
                 aval = mm._true_demand_intercept(data, exporter, tp)
                 for name, val in (("Q_offer", qval), ("a_bid", aval)):
@@ -509,8 +526,17 @@ def _solve_market_reference(
         )
         market.solve(solver=solver)
         diagnostics = _model_diagnostics(market, ctx)
-        x = ctx.vars["x"].toDict()
-        x_dem = ctx.vars["x_dem"].toDict()
+        operating_time_set = set(operating_times)
+        x = {
+            key: value
+            for key, value in ctx.vars["x"].toDict().items()
+            if key[-1] in operating_time_set
+        }
+        x_dem = {
+            key: value
+            for key, value in ctx.vars["x_dem"].toDict().items()
+            if key[-1] in operating_time_set
+        }
         bal_marginal = _equation_marginals(ctx.equations["eq_bal"])
         cap_marginal = _equation_marginals(ctx.equations["eq_cap"])
 

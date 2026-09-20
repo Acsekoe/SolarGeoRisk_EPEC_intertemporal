@@ -107,10 +107,15 @@ class RunConfig:
     c_quad_a: float = 0.1  # For a_bid (demand withholding cost)
 
     # Capacity-policy incentives (objective terms).
-    # Positive values encourage capacity retention/expansion and penalize decommissioning.
+    # terminal_salvage_fraction credits terminal installed capacity once, at the
+    # end of the terminal block, as a fraction of region-specific investment cost.
     cap_keep_reward: float = 0
     capex_subsidy: float = 0
-    terminal_capacity_value: float = 0
+    terminal_salvage_fraction: float = 0
+    # When true, the last time label is only the terminal capacity-state date.
+    # Markets and operating payoffs use times[:-1], while the last capacity
+    # transition and terminal salvage value remain active.
+    terminal_capacity_state_only: bool = False
     decommission_penalty: float = 0
 
     # Force Q_offer == Kcap for all regions and periods (no quantity withholding).
@@ -292,7 +297,10 @@ def _apply_data_overrides(data, cfg: RunConfig) -> None:
     # Capacity-policy incentives
     data.settings["cap_keep_reward"] = float(cfg.cap_keep_reward)
     data.settings["capex_subsidy"] = float(cfg.capex_subsidy)
-    data.settings["terminal_capacity_value"] = float(cfg.terminal_capacity_value)
+    data.settings["terminal_salvage_fraction"] = float(cfg.terminal_salvage_fraction)
+    data.settings["terminal_capacity_state_only"] = bool(
+        cfg.terminal_capacity_state_only
+    )
     data.settings["decommission_penalty"] = float(cfg.decommission_penalty)
 
     # Force Q_offer == Kcap (no quantity withholding)
@@ -331,11 +339,20 @@ def _apply_data_overrides(data, cfg: RunConfig) -> None:
 
 def _build_initial_state(data, cfg: RunConfig, excel_path: str) -> dict[str, dict]:
     times = data.times or ["2025", "2030", "2035", "2040", "2045"]
+    operating_times = set(_it._operating_times(data))
     move_times = _it._move_times(times)
 
     # Try reading warm-start from the initial_state sheet in the input Excel
     excel_ws = load_initial_state(excel_path, data)
     if excel_ws is not None:
+        for tp in times:
+            if tp in operating_times:
+                continue
+            for r in data.regions:
+                excel_ws["Q_offer"][(r, tp)] = 0.0
+                excel_ws["a_bid"][(r, tp)] = 0.0
+                for importer in data.regions:
+                    excel_ws["p_offer"][(r, importer, tp)] = 0.0
         print(f"[CONFIG] Loaded initial state from Excel sheet 'initial_state'")
         for r in data.players:
             q25 = excel_ws["Q_offer"].get((r, times[0]), 0.0)
@@ -355,7 +372,11 @@ def _build_initial_state(data, cfg: RunConfig, excel_path: str) -> dict[str, dic
     dK_net: dict[tuple[str, str], float] = {}
     for tp in times:
         for r in data.players:
-            q_offer[(r, tp)] = max(float(kcap_current.get(r, 0.0)), 0.0)
+            q_offer[(r, tp)] = (
+                max(float(kcap_current.get(r, 0.0)), 0.0)
+                if tp in operating_times
+                else 0.0
+            )
         if tp not in move_times:
             continue
         years = float(ytn_dict.get(tp, 5.0))
@@ -367,13 +388,21 @@ def _build_initial_state(data, cfg: RunConfig, excel_path: str) -> dict[str, dic
             kcap_current[r] = k_now + years * rate
 
     p_offer = {
-        (ex, im, tp): 0.5 * float(data.p_offer_ub[(ex, im)])
+        (ex, im, tp): (
+            0.5 * float(data.p_offer_ub[(ex, im)])
+            if tp in operating_times
+            else 0.0
+        )
         for ex in data.regions
         for im in data.regions
         for tp in times
     }
     a_bid = {
-        (r, tp): _it._true_demand_intercept(data, r, tp)
+        (r, tp): (
+            _it._true_demand_intercept(data, r, tp)
+            if tp in operating_times
+            else 0.0
+        )
         for r in data.regions
         for tp in times
     }
@@ -665,7 +694,13 @@ def run(cfg: RunConfig) -> str:
                 "c_quad_a":              float(cfg.c_quad_a),
                 "cap_keep_reward":       float(cfg.cap_keep_reward),
                 "capex_subsidy":         float(cfg.capex_subsidy),
-                "terminal_capacity_value": float(cfg.terminal_capacity_value),
+                "terminal_salvage_fraction": float(cfg.terminal_salvage_fraction),
+                "terminal_capacity_state_only": bool(cfg.terminal_capacity_state_only),
+                "operating_times": str(_it._operating_times(data)),
+                "terminal_capacity_state_time": str((data.times or [None])[-1]),
+                "terminal_salvage_discount_factor": float(
+                    _it._terminal_salvage_discount_factor(data)
+                ),
                 "decommission_penalty":  float(cfg.decommission_penalty),
                 # --- Player order ---
                 "player_order":          str(effective_order),

@@ -29,6 +29,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import pandas as pd
+
 
 for _name in (
     "OMP_NUM_THREADS",
@@ -114,6 +116,31 @@ def source_workbook(cold_start_root: Path, sequence: str) -> Path:
     return matches[0].resolve()
 
 
+def terminal_source_iteration(workbook: Path) -> int:
+    """Return the last Stage-1 sweep before any unacceptable player solve.
+
+    A later successful sweep cannot repair the provenance of a state that was
+    already updated from an interrupted solve.  Therefore source selection uses
+    the longest contiguous, all-solves-successful prefix rather than merely the
+    largest recorded iteration number.
+    """
+    iterations = pd.read_excel(
+        workbook,
+        sheet_name="iters",
+        usecols=["iter", "all_solves_acceptable"],
+    ).sort_values("iter")
+    if iterations.empty:
+        raise RuntimeError(f"Stage-1 workbook has no completed sweeps: {workbook}")
+    acceptable = iterations["all_solves_acceptable"].fillna(False).astype(bool)
+    failed_positions = [index for index, ok in enumerate(acceptable) if not ok]
+    clean = iterations if not failed_positions else iterations.iloc[: failed_positions[0]]
+    if clean.empty:
+        raise RuntimeError(
+            f"Stage-1 workbook has no clean source sweep before its first failed solve: {workbook}"
+        )
+    return int(clean["iter"].max())
+
+
 def base_configuration(input_path: Path) -> run_gs.RunConfig:
     return run_gs.RunConfig(
         excel_path=str(input_path.resolve()),
@@ -123,6 +150,7 @@ def base_configuration(input_path: Path) -> run_gs.RunConfig:
         c_quad_q=0.1,
         c_quad_p=0.1,
         c_quad_a=0.1,
+        terminal_capacity_state_only=True,
         fix_q_offer_to_kcap=True,
         fix_a_bid_to_true_dem=True,
         force_mu_offer_zero=False,
@@ -133,11 +161,13 @@ def configure_modules(task: dict[str, Any]) -> tuple[Any, dict[str, dict], float
     sequence = str(task["sequence"])
     specification = SEQUENCES[sequence]
     order = list(specification["order"])
-    iteration = int(specification["source_iteration"])
     input_path = Path(task["input_path"]).resolve()
     cold_start_root = Path(task["cold_start_root"]).resolve()
     output_root = Path(task["output_root"]).resolve()
     workbook = source_workbook(cold_start_root, sequence)
+    iteration = terminal_source_iteration(workbook)
+    # Process-local metadata used by every downstream artifact and label.
+    specification["source_iteration"] = iteration
 
     cfg = base_configuration(input_path)
     replay_data = load_data_from_excel(str(input_path), params_region_sheet=PARAMS_SHEET)
@@ -153,7 +183,12 @@ def configure_modules(task: dict[str, Any]) -> tuple[Any, dict[str, dict], float
     if replay_error > 1e-10:
         raise RuntimeError(f"{sequence}: corrected endpoint replay residual is {replay_error:.3g}")
 
-    data = local_search._zero_prox_data(cfg)
+    data = local_search._zero_prox_data(
+        cfg,
+        terminal_salvage_fraction=float(
+            task.get("terminal_salvage_fraction", 0.0)
+        ),
+    )
     overnight._sync_quantity(data, candidate)
     sequence_root = output_root / sequence
     local_root = sequence_root / "local_candidate_zero_prox"

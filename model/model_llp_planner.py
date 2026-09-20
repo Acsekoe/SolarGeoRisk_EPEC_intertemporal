@@ -40,10 +40,14 @@ from gamspy import (
 )
 
 try:
-    from .model_main import ModelContext, ModelData
+    from .model_main import (
+        ModelContext,
+        ModelData,
+        _terminal_salvage_discount_factor,
+    )
     from .data_prep import load_data_from_excel
 except ImportError:
-    from model_main import ModelContext, ModelData
+    from model_main import ModelContext, ModelData, _terminal_salvage_discount_factor
     from data_prep import load_data_from_excel
 
 
@@ -179,6 +183,10 @@ def build_llp_planner_model(
 
     x_dem.up[R, T] = Dmax_p[R, T]
 
+    # The final label is a capacity-state date only, not a market period.
+    x.fx[exp, imp, times[-1]] = z
+    x_dem.fx[R, times[-1]] = z
+
     # Fix investment/decommissioning to zero in the terminal buffer period (2045)
     Icap.fx[R, times[-1]] = z
     Dcap.fx[R, times[-1]] = z
@@ -186,12 +194,16 @@ def build_llp_planner_model(
     # ---- Constraints ----
 
     # (1) Demand balance
-    eq_dem_bal = Equation(m, "eq_dem_bal", domain=[imp, T])
-    eq_dem_bal[imp, T] = Sum(exp, x[exp, imp, T]) == x_dem[imp, T]
+    eq_dem_bal = Equation(m, "eq_dem_bal", domain=[imp, T_plan])
+    eq_dem_bal[imp, T_plan] = (
+        Sum(exp, x[exp, imp, T_plan]) == x_dem[imp, T_plan]
+    )
 
     # (2) Physical capacity: total exports ≤ Kcap
-    eq_cap = Equation(m, "eq_cap", domain=[exp, T])
-    eq_cap[exp, T] = Sum(imp, x[exp, imp, T]) <= Kcap[exp, T]
+    eq_cap = Equation(m, "eq_cap", domain=[exp, T_plan])
+    eq_cap[exp, T_plan] = (
+        Sum(imp, x[exp, imp, T_plan]) <= Kcap[exp, T_plan]
+    )
 
     # (3) Initial capacity
     eq_kcap_init = Equation(m, "eq_kcap_init", domain=[R])
@@ -221,7 +233,7 @@ def build_llp_planner_model(
 
     # ---- Objective (planning horizon only: T_plan, excludes 2045) ----
     # Maximise: consumer surplus - manufacturing cost - shipping - holding cost - investment cost
-    obj = Sum(
+    operating_welfare = Sum(
         [T_plan],
         beta_p[T_plan] * ytn_p[T_plan] * (
             # Consumer surplus
@@ -236,6 +248,17 @@ def build_llp_planner_model(
             - Sum(R, c_inv_p[R] * Icap[R, T_plan])
         ),
     )
+    salvage_fraction = float(
+        (data.settings or {}).get("terminal_salvage_fraction", 0.0)
+    )
+    if salvage_fraction < 0.0:
+        raise ValueError("terminal_salvage_fraction must be non-negative")
+    terminal_salvage = (
+        gp.Number(_terminal_salvage_discount_factor(data))
+        * gp.Number(salvage_fraction)
+        * Sum(R, c_inv_p[R] * Kcap[R, times[-1]])
+    )
+    obj = operating_welfare + terminal_salvage
 
     # Collect all equations
     all_equations = [eq_dem_bal, eq_cap, eq_kcap_init]
@@ -360,7 +383,7 @@ def extract_llp_state(ctx: ModelContext, data: ModelData) -> Dict[str, object]:
     rec = m["eq_dem_bal"].records
     if rec is not None:
         for _, row in rec.iterrows():
-            t = row["T"]
+            t = row["T_plan"] if "T_plan" in row.index else row["T"]
             w = float(beta_dict.get(t, 1.0)) * float(ytn_dict.get(t, 5.0))
             lam_dict[(row["imp"], t)] = -float(row["marginal"]) / w if w else 0.0
 
@@ -368,7 +391,7 @@ def extract_llp_state(ctx: ModelContext, data: ModelData) -> Dict[str, object]:
     rec = m["eq_cap"].records
     if rec is not None:
         for _, row in rec.iterrows():
-            t = row["T"]
+            t = row["T_plan"] if "T_plan" in row.index else row["T"]
             w = float(beta_dict.get(t, 1.0)) * float(ytn_dict.get(t, 5.0))
             mu_cap_dict[(row["exp"], t)] = -float(row["marginal"]) / w if w else 0.0
 

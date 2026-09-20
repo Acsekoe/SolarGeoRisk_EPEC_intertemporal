@@ -1,0 +1,141 @@
+Served demand equals Dmax in every region, period and equilibrium (E1-E3), with
+deviations of order 1e-8. Regional WTP intercepts (a_i = 1100-2400 $/kW) sit far
+above equilibrium prices (86-292 $/kW), so the linear inverse-demand branch never
+binds and the elasticity calibration (|eps|=0.90) affects only consumer-surplus
+accounting, not quantities. Equilibrium multiplicity is therefore entirely a
+supply-side phenomenon: who produces, at what offer, with what capacity. This is
+also why the three equilibria differ in global welfare by only 0.12% while
+regional payoffs differ by up to 7.6% (APAC) - strategic pricing is close to a
+pure transfer, and the only real efficiency losses are inefficient production
+allocation and the cost of holding idle capacity.
+
+Across E1-E3 the following outcomes are invariant and can be reported as robust
+regardless of equilibrium selection: China's domestic clearing price equals its
+manufacturing cost exactly in all periods (pinned by the domestic-offer
+constraint 9f); EU and US collapse to zero or near-zero manufacturing capacity by
+2030; import-dependent regions clear 20-30% above their own post-learning
+manufacturing cost from 2030 onward; and global capacity exceeds global demand in
+every period. What is NOT invariant is the identity of the secondary supplier and
+the location of the capacity overhang: APAC expands to 146-196 GW in E2/E3 but
+collapses to 27 GW in E1, while ROW retains 99 GW (E1), 44 GW (E2) or 19 GW (E3)
+at exactly 0% utilization throughout. The "idle capacity concentrated in ROW"
+claim survives qualitatively but its magnitude varies by a factor of five.
+
+E3 shows China holding 210-219 GW idle at 69-71% utilization through 2030-2035
+while APAC expands into the EU and US markets, then moving to 99.3% utilization
+in 2040 and recapturing 89-100% of every import market, with APAC capacity
+falling from 196 GW to 13.5 GW. The 2040 APAC collapse cannot be cleanly
+attributed to strategy, because 2045 is the terminal period, carries no salvage
+value, and is a reporting buffer only; an end-of-horizon pull toward
+decommissioning is present and confounded with the strategic effect. Separating
+them requires extending the buffer (a 2050 period, or a nonzero
+terminal_capacity_value) and checking whether APAC still exits at 2040.
+
+The uncontaminated evidence for the strategic-buffer claim is ROW, not APAC. ROW
+holds capacity at exactly 0% utilization in every period including the terminal
+one, paying 0.56-1.37 bn USD per period in fixed holding costs for capacity that
+ships nothing (E3: 18.5 GW; E2: 43.5 GW). End-of-horizon effects push toward
+scrapping, so a region that pays to retain wholly idle capacity into the terminal
+period is evidence for, not against, the outside-option interpretation. In E1
+ROW instead activates its retained capacity in 2040 at 100% utilization, which is
+the same option exercised rather than merely held.
+
+The MPEC and the planner do not optimize over the same horizon. The per-player
+MPEC objective in model_main.py sums over the full set T including 2045, while
+the planner objective in model_llp_planner.py sums over T_plan and explicitly
+excludes 2045 as a terminal buffer. The regional objective values stored in the
+acceptance audits therefore include a 2045 term and are not on the 2025-2040
+reporting basis used for the manuscript's welfare table. Any EPEC-versus-planner
+welfare gap and any welfare-based equilibrium selection must be recomputed on a
+common period set before being reported; the 0.12% spread across E1-E3 is small
+enough that the selection rule could flip. All four capacity policy levers
+(cap_keep_reward, capex_subsidy, terminal_capacity_value, decommission_penalty)
+default to zero in RunConfig, so the statement that the model contains no salvage
+term is accurate as run.
+
+The 28-branch direct zero-proximal grid (80-sweep cap, 7 player orders x 2 damping
+x 2 initializations) yielded exactly one accepted profile at 0.9965% (APAC,
+af-eu-us-apac-row-ch/high_a040, sweep 10); 17 branches exhausted 80 sweeps and 10
+died on best-response solver failures. The proximal-stabilized Stage-1 anchors
+plus short unpenalized release sweeps produced three acceptances within 5-7
+sweeps. This is the cleanest available evidence that the proximal scheme is a
+basin-finding device rather than part of the equilibrium definition, since every
+acceptance test is run at zero proximal penalty in the original economic game.
+The postrun analysis itself cautions that a matched pre-registered experiment is
+needed before claiming penalties are necessary.
+
+Two defects in the current manuscript are confirmed by these artifacts. First, the
+profile reported in the paper is not an equilibrium: its frozen zero-proximal
+audit gives a 47.58% unilateral gain for ROW, with CH, APAC, US and AF also above
+1%. Second, all three historical "converged" runs behind the current figures used
+b_dem slopes inconsistent with the workbook's own formula (23 of 24 coefficients
+wrong, Africa 2025 the only match). Consequently Table I, the 1.05% planner gap,
+and the capacity trajectory (paper: 1401 -> 1290 GW; corrected E1-E3: 1401 -> 748-783
+GW in 2040) all need regeneration from the corrected-demand artifacts, and the
+planner benchmark must be re-solved on the corrected workbook.
+
+Base-year vintage of the demand calibration is internally inconsistent with the
+introduction, and this is checkable without leaving the PDF. The intro states
+2024 actuals of >550 GW global, 324 GW China, ~50 GW US and ~15 GW Africa, while
+Table I gives 2025 Dmax of 500, 280, 45 and 5 GW for the same regions - the 2025
+period is below the stated 2024 outturn everywhere except the EU, and Africa is
+off by a factor of three. China's 280 is almost certainly the 2024 NEA
+grid-connected figure (277.6 GW), so the paper carries two different numbers for
+China 2024 that differ by 15% on different accounting bases. The available
+defence is that periods are five-year blocks (y_t = 5), so Dmax_2025 is the
+representative annual demand for 2025-2029 rather than calendar 2025; under IEA
+outlooks Chinese annual additions decline after the mid-decade peak, which makes
+a block average below the 2024 peak defensible. Africa is not rescued by that
+relabelling and needs either a higher Dmax or a corrected intro sentence.
+
+Two provenance defects compound this. First, the only record of the demand
+derivation in the workbook is a `research` sheet citing "Renewables 2025,
+2025-2030, from regional summaries" with China 420, EU 80, APAC 100, US 50,
+Africa 7.8, ROW 128 (sum 786), which matches neither the 2025 column (500) nor
+the 2030 column (670); the tabulated values are therefore not traceable to the
+cited source, which is precisely what Reviewer 2's transparency request asks
+for. Second, the introduction attributes China's ~930 GW of module capacity -
+also Table I's initial capacity, a core model input - to iea_pv_supply, the IEA
+Solar PV Global Supply Chains special report of 2022, whose vintage cannot
+support that number. Results are not at risk: demand binds in every region and
+period, but capacity is 1401 GW against 500 GW of demand (2.8x oversupply, still
+2.4x at +15% demand), so the exit ordering, the capacity cliff and the strategic
+capacity-holding result are insensitive to the base-year level.
+
+Eq. (9f), pinning the domestic self-offer to marginal cost, is a necessary
+normalization rather than the redundancy Reviewer 2 suspects, and the argument is
+exact here. Collecting the terms in region r's own objective that multiply its own
+market-clearing price gives -lambda_r * x_dem_r from CS and +(lambda_r - c_man_r) *
+x_flow_{r,r} from the i=r term of PS, so dW_r/dlambda_r = x_flow_{r,r} - x_dem_r =
+-(net imports of r). A self-sufficient region therefore has its own domestic offer
+drop out of its objective entirely, leaving a flat direction in the strategy vector
+and an unbounded MPEC solution set in that coordinate; because served demand equals
+Dmax in every region and period, quantities cannot respond and the cancellation is
+exact, not first-order. China is exactly self-sufficient (net imports 0.0) in every
+period of all three equilibria, so without (9f) the dominant player's domestic offer
+is completely undetermined and ||Delta theta|| can never settle. For a net importer
+the derivative is strictly negative, so the region would offer domestically below
+its own marginal cost to depress lambda_r, which in the LLP merit order dispatches
+domestic supply ahead of genuinely cheaper imports - a modelling artifact rather
+than market power. This also matches Reviewer 1's reading that markups are an
+export-side instrument.
+
+Eqs. (9d) and (9e) are both genuinely non-binding and should be conceded. The
+workbook sets g_dec_ub_per_yr = 1.0 for all six regions and the code implements
+Dcap_neg <= g_dec * Kcap, a fraction of stock per year, so over a five-year period
+the bound permits retiring five times the installed stock; the effective
+restriction is capacity non-negativity. The worst usage observed across E1-E3 is
+Dcap_neg/Kcap = 0.2000 (EU 2025, 4.4 GW/yr on 22 GW), which is exactly 1/y_t, i.e.
+complete exit within a single period, at 20% of the stated bound. The offer-price
+ceiling is 2000 $/kW uniformly while the largest offer realized anywhere in E1-E3
+is 353-364 $/kW, also below every regional choke price p_full (521-1136). Note that
+printed Eq. (9d) states an absolute lower bound on Delta K while the code enforces a
+proportional one, so deleting (9d) resolves both the redundancy and the
+notation error at once.
+
+The centralized benchmark already is what Reviewer 2 asks for: model_llp_planner.py
+declares x, x_dem, Kcap, Icap_pos and Dcap_neg as decision variables and maximizes a
+single objective, so it is a single-level planner jointly optimizing capacity and
+flows, not the LLP conditioned on EPEC capacities. Only the page-7 wording is
+misleading. It must be corrected together with the horizon asymmetry, since the
+planner sums over T_plan (excluding 2045) while each MPEC sums over the full T.

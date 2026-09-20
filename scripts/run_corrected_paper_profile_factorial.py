@@ -37,12 +37,15 @@ for _name in (
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from model import model_main as mm
 from scripts import run_corrected_a030_search as base_search
 from scripts.run_corrected_equilibrium_search import (
     SEQUENCES,
     configure_modules,
     relative,
     sha256,
+    source_workbook,
+    terminal_source_iteration,
     write_json,
 )
 from scripts.run_local_paper_equilibrium_experiment import clone_state
@@ -122,7 +125,7 @@ def make_factorial_initial_state(
     for exporter in data.regions:
         for importer in data.regions:
             upper = float(data.p_offer_ub[(exporter, importer)])
-            for period in list(data.times or []):
+            for period in mm._operating_times(data):
                 cost = float(
                     (data.c_man_t or {}).get(
                         (exporter, period), data.c_man[exporter]
@@ -188,6 +191,7 @@ def protocol_text(
     max_sweeps: int,
     maxiter: int,
     workers: int,
+    terminal_salvage_fraction: float,
 ) -> str:
     sequence_lines = "\n".join(
         f"- `{name}`: Stage-1 iteration {SEQUENCES[name]['source_iteration']}; "
@@ -211,6 +215,13 @@ Created {now()}.
 - Maximum sweeps per branch: `{max_sweeps}`
 - Best-response maximum iterations: `{maxiter}`
 - Parallel workers: `{workers}`
+- Terminal salvage fraction: `{terminal_salvage_fraction}`
+- Operating market periods: `2025, 2030, 2035, 2040`
+- Terminal state: `2045` installed capacity only; no 2045 market or operating payoff
+- Terminal salvage definition: one credit on 2045 installed capacity, discounted
+  to 2045; no all-period investment subsidy
+- Stage-1 source rule: last contiguous checkpoint for which every player solve
+  was acceptable; any state at or after an interrupted solve is excluded
 
 The capacity weight multiplies the complete Stage-1 `dK_net` path and the
 corresponding capacity path is reconstructed from the model's accounting
@@ -259,11 +270,14 @@ def main() -> None:
     parser.add_argument("--workers", type=int, default=5)
     parser.add_argument("--maxiter", type=int, default=600)
     parser.add_argument("--max-sweeps", type=int, default=20)
+    parser.add_argument("--terminal-salvage-fraction", type=float, default=0.0)
     parser.add_argument("--validate-only", action="store_true")
     args = parser.parse_args()
 
     if args.workers < 1 or args.maxiter < 1 or args.max_sweeps < 1:
         raise ValueError("workers, maxiter, and max-sweeps must be positive")
+    if args.terminal_salvage_fraction < 0.0:
+        raise ValueError("terminal-salvage-fraction must be non-negative")
     if len(set(args.sequences)) != len(args.sequences):
         raise ValueError("sequences must not contain duplicates")
     for label, values in (
@@ -287,6 +301,15 @@ def main() -> None:
         raise FileNotFoundError(input_path)
     if not cold_start_root.is_dir():
         raise FileNotFoundError(cold_start_root)
+
+    # Resolve the new Stage-1 endpoints from the workbooks themselves.  The
+    # historical fixed iteration numbers are not reusable after changing data,
+    # horizon treatment, and terminal value.
+    for sequence in args.sequences:
+        workbook = source_workbook(cold_start_root, sequence)
+        SEQUENCES[sequence]["source_iteration"] = terminal_source_iteration(
+            workbook
+        )
 
     tasks: list[dict[str, Any]] = []
     for sequence in args.sequences:
@@ -315,6 +338,7 @@ def main() -> None:
                             "historical_o6": str(input_path),
                             "maxiter": args.maxiter,
                             "max_sweeps": args.max_sweeps,
+                            "terminal_salvage_fraction": args.terminal_salvage_fraction,
                         }
                     )
     branch_ids = [(task["sequence"], task["branch"]) for task in tasks]
@@ -341,6 +365,7 @@ def main() -> None:
             max_sweeps=args.max_sweeps,
             maxiter=args.maxiter,
             workers=workers,
+            terminal_salvage_fraction=args.terminal_salvage_fraction,
         ),
         encoding="utf-8",
     )
@@ -349,7 +374,7 @@ def main() -> None:
         "created": now(),
         "status": "running",
         "pid": os.getpid(),
-        "method": "paper-profile price/capacity/damping factorial under corrected demand",
+        "method": "paper-profile price/capacity/damping factorial under corrected demand with optional terminal salvage",
         "task_count": len(tasks),
         "acceptance_criterion": (
             "one-start common frozen-profile maximum relative gain <= 1%, "
@@ -358,6 +383,7 @@ def main() -> None:
         "acceptance_audit_starts": 1,
         "multistart_used": False,
         "algorithmic_proximal_penalties": 0.0,
+        "terminal_salvage_fraction": args.terminal_salvage_fraction,
         "move_cap": None,
         "gain_filter": None,
         "players_frozen": False,

@@ -115,7 +115,7 @@ def initialize_basin(data: Any, source: dict[str, dict], cost_weight: float) -> 
         for importer in data.regions:
             if exporter == importer:
                 continue
-            for period in list(data.times or []):
+            for period in mm._operating_times(data):
                 key = (exporter, importer, period)
                 cost = float((data.c_man_t or {}).get((exporter, period), data.c_man[exporter]))
                 state["p_offer"][key] = (
@@ -141,7 +141,7 @@ def update_player(
     for importer in data.regions:
         if importer == player:
             continue
-        for period in list(data.times or []):
+        for period in mm._operating_times(data):
             key = (player, importer, period)
             state["p_offer"][key] = (
                 (1.0 - weight) * float(state["p_offer"][key])

@@ -78,6 +78,8 @@ def solve_gs_intertemporal(
         base_order = list(data.players)
 
     times: List[str] = data.times or ["2025", "2030", "2035", "2040", "2045"]
+    operating_times = _it._operating_times(data)
+    operating_time_set = set(operating_times)
     move_times = _it._move_times(times)
     init_kcap = _it._initial_capacity_by_region(data)
     fix_a_bid = _it._fix_a_bid_to_true_dem(data)
@@ -130,6 +132,17 @@ def solve_gs_intertemporal(
         theta_Q = {(r, tp): 0.8 * float(implied_kcap[(r, tp)]) for r in data.players for tp in times}
         theta_p_offer = {(ex, im, tp): 0.5 * float(data.p_offer_ub[(ex, im)]) for ex in data.regions for im in data.regions for tp in times}
         theta_a_bid = {(r, tp): _it._true_demand_intercept(data, r, tp) for r in data.players for tp in times}
+
+    # Keep full-time-index state dictionaries for artifact compatibility while
+    # making the terminal capacity-state label market-inactive.
+    for r in data.players:
+        for tp in times:
+            if tp in operating_time_set:
+                continue
+            theta_Q[(r, tp)] = 0.0
+            theta_a_bid[(r, tp)] = 0.0
+            for importer in data.regions:
+                theta_p_offer[(r, importer, tp)] = 0.0
 
     # ---- Warm-start GAMS variable levels from theta dicts ----
     # Without this, ipopt starts all POSITIVE variables at level 0, which
@@ -300,12 +313,22 @@ def solve_gs_intertemporal(
         frac = min((ramp_it - 1) / (omega_ramp_iters - 1), 1.0)
         return float(omega + frac * (omega_min - omega))
 
-    conv_times = times[:-1] if exclude_terminal_from_convergence and len(times) > 1 else times
-    conv_move_times = (
-        move_times[:-1]
-        if exclude_terminal_from_convergence and len(move_times) > 1
-        else move_times
-    )
+    if _it._terminal_capacity_state_only(data):
+        # The terminal label has no market strategy.  The last capacity move
+        # remains active because it determines the salvaged terminal stock.
+        conv_times = operating_times
+        conv_move_times = move_times
+    else:
+        conv_times = (
+            times[:-1]
+            if exclude_terminal_from_convergence and len(times) > 1
+            else times
+        )
+        conv_move_times = (
+            move_times[:-1]
+            if exclude_terminal_from_convergence and len(move_times) > 1
+            else move_times
+        )
 
     for it in range(1, iters + 1):
         r_strat = 0.0
@@ -467,7 +490,7 @@ def solve_gs_intertemporal(
             # at the same rate; without damping, theta_Q could jump by the full
             # step while theta_dK_net (and thus theta_Kcap) are only moved by omega.
             fix_q = _it._fix_q_offer_to_kcap(data)
-            for tp in times:
+            for tp in operating_times:
                 key = (p, tp)
                 solved_kcap = float(theta_Kcap.get(key, 0.0))
                 if fix_q:
@@ -480,7 +503,7 @@ def solve_gs_intertemporal(
 
             # Update p_offer
             for im in data.regions:
-                for tp in times:
+                for tp in operating_times:
                     key = (p, im, tp)
                     if key in poffer_sol:
                         br = float(poffer_sol[key])
@@ -488,16 +511,14 @@ def solve_gs_intertemporal(
 
             # Update a_bid
             if not fix_a_bid:
-                for tp in times:
+                for tp in operating_times:
                     sk = (p, tp)
                     if sk in a_bid_sol:
                         theta_a_bid[sk] = (1.0 - omega_it) * theta_a_bid[sk] + omega_it * float(a_bid_sol[sk])
 
         # ---- Convergence metrics ----
-        # When exclude_terminal_from_convergence=True:
-        #  - 2045 is dropped from conv_times (excludes Q_offer, p_offer, a_bid at 2045)
-        #  - 2040 is dropped from conv_move_times (excludes dK_net at 2040, i.e. the 2040→2045 transition)
-        # Result: convergence only checks 2025-2040 for prices/quantities, 2025-2035 for capacity changes.
+        # Terminal-capacity-state mode checks market strategies through 2040
+        # and every capacity move through 2040; 2045 has no market strategy.
         # Per-variable diagnostics: collect the worst offenders each sweep
         _diag_dk: List[Tuple[str, str, float, float, float]]  = []   # (r, tp, old, new, rel)
         _diag_q:  List[Tuple[str, str, float, float, float]]  = []

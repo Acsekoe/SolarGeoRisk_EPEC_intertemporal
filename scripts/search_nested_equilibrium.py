@@ -66,9 +66,14 @@ def _deserialize_state(payload: dict[str, list[dict[str, object]]], data, templa
 
 def _sync_quantity(data, state) -> None:
     times = list(data.times or [])
+    operating_times = set(mm._operating_times(data))
     kcap = mm._implied_capacity_path(data, times, state["dK_net"])
     state["Q_offer"] = {
-        (region, tp): max(float(kcap[(region, tp)]), 0.0)
+        (region, tp): (
+            max(float(kcap[(region, tp)]), 0.0)
+            if tp in operating_times
+            else 0.0
+        )
         for region in data.players
         for tp in times
     }
@@ -77,7 +82,7 @@ def _sync_quantity(data, state) -> None:
 def _set_prices_at_cost(data, state) -> None:
     for exporter in data.regions:
         for importer in data.regions:
-            for tp in list(data.times or []):
+            for tp in mm._operating_times(data):
                 state["p_offer"][(exporter, importer, tp)] = float(
                     (data.c_man_t or {}).get((exporter, tp), data.c_man[exporter])
                 )

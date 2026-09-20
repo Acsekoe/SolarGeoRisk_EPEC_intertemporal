@@ -125,7 +125,7 @@ def run_blocks(blocks: int) -> None:
             c_quad_a=0.1,
             cap_keep_reward=0.0,
             capex_subsidy=0.0,
-            terminal_capacity_value=0.0,
+            terminal_salvage_fraction=0.0,
             decommission_penalty=0.0,
             fix_q_offer_to_kcap=True,
             force_mu_offer_zero=False,

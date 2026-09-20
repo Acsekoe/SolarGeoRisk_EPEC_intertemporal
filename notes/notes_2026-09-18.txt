@@ -1,0 +1,52 @@
+2026-09-18 -- Demand calibration: elasticity enters only as a slope scaler
+The full-demand anchor (D^max_{i,t}, WTP_i) is invariant to the assumed
+elasticity, because a_i = WTP_i(1+1/|eps|) and b_{i,t} = WTP_i/(|eps| D^max_{i,t})
+are both derived by imposing the point elasticity at that same anchor. Hence
+|eps| does not change the price at which full demand is served; it only rescales
+b_{i,t} and the markup range (a_i - WTP_i) by 1/|eps| -- the literature range
+[0.65, 1.20] corresponds to slopes of 1.385x and 0.75x the base case |eps|=0.90.
+This is the cleanest defence of using a single midpoint elasticity in the paper
+without running an elasticity sensitivity: the calibration target is the WTP
+anchor, not the slope itself.
+
+2026-09-18 -- Direct vs inverse slope: two different b's in the calibration memo
+demand_model.tex Section 1 reports b_{2025,i} = |eps| D^max/WTP (units GW/$, the
+DIRECT demand slope, e.g. ch = 0.480), while the model and the paper use the
+INVERSE slope b_{i,t} = WTP/(|eps| D^max) (units $/kW/GW, ch = 1.788 at
+D^max = 324). The two are reciprocals, so the memo's table and the model input are
+consistent, but the same symbol b denotes different objects. Only the inverse slope
+should ever appear in the paper, since lambda = a - b x^dem.
+
+2026-09-18 -- Africa's slope is two orders of magnitude above China's
+With WTP_af = 1135.6 $/kW and D^max_af,2025 = 10 GW, b_af,2025 = 126.2 $/kW/GW
+versus b_ch,2025 = 1.79. Small high-WTP markets therefore get very steep inverse
+demand, so even a few GW of unserved Africa demand moves the African price
+strongly. Worth keeping in mind when interpreting regional price spreads: part of
+the African price level is a calibration artefact of the small market size, not of
+strategic behaviour.
+
+2026-09-18 -- Pitfall: the elasticity denominator is WTP, not a
+When writing the calibration formula, note that the point elasticity is imposed at
+the anchor (D^max, WTP), so b = WTP/(|eps| D^max). Using a in place of WTP gives a
+slope too steep by the factor a/WTP = 1 + 1/|eps| (2.111 at |eps| = 0.90) and
+silently realises an elasticity of -|eps| WTP/a = -0.43 instead of -0.90. WTP is the
+primitive; a = WTP(1 + 1/|eps|) is derived from the anchor plus the slope.
+
+2026-09-18 -- The demand cap binds in every market-year: results are eps-invariant
+In the selected equilibrium (15_equilibria, order ch-af-apac-eu-row-us, pf100_k050_a030,
+sweep_014) served demand equals D^max in all 6 regions x 4 periods (gap < 1e-7 GW), and
+every clearing price lies at 16-53% of the regional WTP (highest: us 2025 at 0.53, lowest
+ch 2040 at 0.17). The effective demand curve is kinked -- vertical at D^max for
+lambda <= WTP, elastic only above WTP -- so the equilibrium sits entirely on the vertical
+segment. Consequence: b_{i,t}, and therefore the elasticity assumption, has no effect on
+equilibrium prices, quantities, capacities or trade flows. Prices are disciplined by rival
+offers and the offer cap, not by demand response.
+
+2026-09-18 -- eps enters welfare only as an exogenous constant that cancels in differences
+With x^dem = D^max the consumer surplus collapses to
+CS = WTP*D^max*(1 + 1/(2|eps|)) - lambda*D^max, so the eps-dependent part
+WTP*D^max/(2|eps|) is purely exogenous. It is identical in the EPEC and planner runs and
+cancels exactly in the EPEC-minus-planner welfare differences reported in the paper. Its
+magnitude is large (China 2025 alone: 93.9 bn$ at |eps|=0.9, 130.0 bn$ at 0.65, 70.4 bn$
+at 1.2), which is a strong argument for reporting welfare *differences* rather than levels:
+the level carries an arbitrary elasticity-dependent constant.

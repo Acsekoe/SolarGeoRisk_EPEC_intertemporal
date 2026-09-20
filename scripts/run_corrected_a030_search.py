@@ -185,6 +185,9 @@ def run_branch(task: dict[str, Any]) -> dict[str, Any]:
                         relative(historical_o6) if branch == "historical_o6" else None
                     ),
                     "algorithmic_proximal_penalties": 0.0,
+                    "terminal_salvage_fraction": float(
+                        task.get("terminal_salvage_fraction", 0.0)
+                    ),
                     "multistart_used": False,
                     "profile": full_state_payload(data, initial_state, initial_market),
                     "market_diagnostics": initial_market_diagnostics,
@@ -318,6 +321,9 @@ def run_branch(task: dict[str, Any]) -> dict[str, Any]:
                         "move_cap": None,
                         "source_workbook": relative(workbook),
                         "algorithmic_proximal_penalties": 0.0,
+                        "terminal_salvage_fraction": float(
+                            task.get("terminal_salvage_fraction", 0.0)
+                        ),
                         "multistart_used": False,
                         "players": player_rows,
                         "updated_players": [
@@ -403,6 +409,9 @@ def run_branch(task: dict[str, Any]) -> dict[str, Any]:
             ),
             "move_cap": None,
             "algorithmic_proximal_penalties": 0.0,
+            "terminal_salvage_fraction": float(
+                task.get("terminal_salvage_fraction", 0.0)
+            ),
             "multistart_used": False,
             "selected_profile": chosen["profile_path"],
             "selected_sweep": chosen["sweep"],
