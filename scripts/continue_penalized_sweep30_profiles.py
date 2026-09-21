@@ -304,11 +304,16 @@ def run_task(task: dict[str, Any]) -> dict[str, Any]:
             "source_warning": (
                 None
                 if source["all_solves_acceptable"]
-                else "Requested sweep-30 source follows an unacceptable solve and is diagnostic only."
+                else (
+                    f"Requested sweep-{SOURCE_ITERATION} source follows an "
+                    "unacceptable solve and is diagnostic only."
+                )
             ),
             "configuration": {
                 **asdict(cfg),
-                "initial_state_override": "exact replay of source sweep 30",
+                "initial_state_override": (
+                    f"exact replay of source sweep {SOURCE_ITERATION}"
+                ),
             },
         }
         write_json(provenance_path, provenance)
@@ -430,7 +435,11 @@ def main() -> None:
         "created": now(),
         "status": "running",
         "pid": os.getpid(),
-        "method": "ten-sweep continuation from recorded sweep-30 profiles with terminal damping and proximal penalties",
+        "method": (
+            f"{CONTINUATION_SWEEPS}-sweep continuation from recorded "
+            f"sweep-{SOURCE_ITERATION} profiles with terminal damping and "
+            "proximal penalties"
+        ),
         "input": relative(input_path),
         "input_sha256": sha256(input_path),
         "existing_source_root": relative(existing_root),
