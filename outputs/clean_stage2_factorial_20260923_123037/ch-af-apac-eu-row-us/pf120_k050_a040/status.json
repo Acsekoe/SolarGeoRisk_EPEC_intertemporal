@@ -1,0 +1,77 @@
+{
+  "created": "2026-09-23T12:42:54+02:00",
+  "status": "accepted",
+  "pid": 35608,
+  "run_index": 10,
+  "run_total": 36,
+  "sequence": "ch-af-apac-eu-row-us",
+  "branch": "pf120_k050_a040",
+  "branch_specification": {
+    "description": "retained Stage-1 endpoint; bilateral export offers initialized at 1.20 times period-specific manufacturing cost; Stage-1 net capacity changes scaled by 0.50; fixed all-player Gauss--Seidel damping 0.40",
+    "kind": "clean_objective_stage2_price_capacity_factorial",
+    "price_offer_factor_to_manufacturing_cost": 1.2,
+    "capacity_change_path_weight": 0.5,
+    "capacity_reference_path": "retained Stage-1 endpoint",
+    "capacity_zero_weight_endpoint": "observed initial capacity with zero net changes",
+    "domestic_offer_initialization": "period-specific manufacturing cost",
+    "bilateral_export_offer_initialization": "price factor times period-specific manufacturing cost, clipped to model bounds",
+    "alpha": 0.4,
+    "objective_mode": "without-mu-and-penalties",
+    "subtract_mu_offer_from_producer_margin": false,
+    "economic_quadratic_penalties": 0.0,
+    "algorithmic_proximal_penalties": 0.0,
+    "move_cap": null,
+    "gain_filter": null,
+    "players_frozen": false
+  },
+  "player_order": [
+    "ch",
+    "af",
+    "apac",
+    "eu",
+    "row",
+    "us"
+  ],
+  "stage1_source": {
+    "sequence": "ch-af-apac-eu-row-us",
+    "player_order": [
+      "ch",
+      "af",
+      "apac",
+      "eu",
+      "row",
+      "us"
+    ],
+    "source_global_sweep": 26,
+    "source_replay": [
+      {
+        "workbook": "outputs\\new_equilibria\\penalized_profiles\\ch-af-apac-eu-row-us\\penalized_sweeps_001_026.xlsx",
+        "workbook_sha256": "A1FFC59407C899E3E09E719581AE6ED16271F7C77B686F6338DA4F38D9A2B1E7",
+        "through_local_iteration": 26,
+        "replay_error": 4.440892098500626e-16
+      }
+    ],
+    "maximum_replay_error": 4.440892098500626e-16
+  },
+  "input": "_MOVE\\demand_calibration\\correction_20260915_131409\\input_data_intertemporal_corrected_20260915_131409.xlsx",
+  "input_sha256": "F426E480A20565286F6CD6678A5EEC0DE6E7376382826983E7FC3D39C2DEA5E0",
+  "objective_mode": "without-mu-and-penalties",
+  "subtract_mu_offer_from_producer_margin": false,
+  "economic_quadratic_penalties": 0.0,
+  "algorithmic_proximal_penalties": 0.0,
+  "terminal_salvage_fraction": 0.5,
+  "alpha": 0.4,
+  "price_factor": 1.2,
+  "capacity_weight": 0.5,
+  "max_sweeps": 15,
+  "selected_profile": "outputs\\clean_stage2_factorial_20260923_123037\\ch-af-apac-eu-row-us\\pf120_k050_a040\\sweep_004.json",
+  "selected_sweep": 4,
+  "one_start_audit": "outputs\\clean_stage2_factorial_20260923_123037\\ch-af-apac-eu-row-us\\pf120_k050_a040\\audits\\audit_sweep_004_one_start.json",
+  "one_start_max_relative_gain": 0.005921495257679588,
+  "one_start_max_gain_player": "apac",
+  "all_six_solves_successful": true,
+  "local_one_percent_equilibrium": true,
+  "criterion": "one-start common frozen-profile clean-objective maximum relative gain <= 1.00%, all six solves successful",
+  "claim_scope": "local computational criterion; no multistart or global claim",
+  "elapsed_seconds": 201.40752259991132
+}

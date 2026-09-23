@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import argparse
 import os
 import shutil
 import tempfile
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Dict, List
 
@@ -37,6 +38,13 @@ PROJECT_ROOT = os.path.dirname(SCRIPTS_DIR)
 # Edit this list to control the Gauss-Seidel sweep order.
 # Every strategic player must appear exactly once (case-insensitive).
 PLAYER_ORDER: List[str] = ["eu", "us", "af", "row", "apac", "ch"] 
+
+OBJECTIVE_MODE_WITH_MU_AND_PENALTIES = "with-mu-and-penalties"
+OBJECTIVE_MODE_WITHOUT_MU_AND_PENALTIES = "without-mu-and-penalties"
+OBJECTIVE_MODES = (
+    OBJECTIVE_MODE_WITH_MU_AND_PENALTIES,
+    OBJECTIVE_MODE_WITHOUT_MU_AND_PENALTIES,
+)
 
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -75,6 +83,11 @@ class RunConfig:
     exclude_terminal_from_convergence: bool = True
 
     keep_workdir: bool = False
+
+    # Objective variants used for comparison runs. The default preserves the
+    # historical formulation. The alternative removes the -mu_offer producer
+    # term as well as all economic-quadratic and algorithmic-proximal penalties.
+    objective_mode: str = OBJECTIVE_MODE_WITH_MU_AND_PENALTIES
 
     knitro_outlev: int | None = None
     knitro_maxit: int | None = None
@@ -144,6 +157,37 @@ class RunConfig:
     # Override the module-level PLAYER_ORDER for this run.
     # Used by the sensitivity runner to vary sweep order across runs.
     player_order: List[str] | None = None
+
+
+def _effective_run_config(cfg: RunConfig) -> RunConfig:
+    """Return the effective configuration for the selected objective variant."""
+    mode = str(cfg.objective_mode).strip().lower().replace("_", "-")
+    if mode not in OBJECTIVE_MODES:
+        raise ValueError(
+            f"Unsupported objective_mode '{cfg.objective_mode}'. "
+            f"Choose one of: {', '.join(OBJECTIVE_MODES)}."
+        )
+    if mode == OBJECTIVE_MODE_WITH_MU_AND_PENALTIES:
+        return cfg if cfg.objective_mode == mode else replace(cfg, objective_mode=mode)
+    return replace(
+        cfg,
+        objective_mode=mode,
+        c_pen_q=0.0,
+        c_pen_p=0.0,
+        c_pen_a=0.0,
+        c_pen_dk=0.0,
+        c_pen_q_mid=None,
+        c_pen_p_mid=None,
+        c_pen_a_mid=None,
+        c_pen_dk_mid=None,
+        c_pen_q_final=None,
+        c_pen_p_final=None,
+        c_pen_a_final=None,
+        c_pen_dk_final=None,
+        c_quad_q=0.0,
+        c_quad_p=0.0,
+        c_quad_a=0.0,
+    )
 
 
 
@@ -274,6 +318,7 @@ def _solver_options(
 
 
 def _apply_data_overrides(data, cfg: RunConfig) -> None:
+    cfg = _effective_run_config(cfg)
     data.eps_x = float(cfg.eps_x)
     data.eps_comp = float(cfg.eps_comp)
 
@@ -293,6 +338,17 @@ def _apply_data_overrides(data, cfg: RunConfig) -> None:
     data.settings["c_quad_q"]  = float(cfg.c_quad_q)
     data.settings["c_quad_p"]  = float(cfg.c_quad_p)
     data.settings["c_quad_a"]  = float(cfg.c_quad_a)
+
+    data.settings["objective_mode"] = cfg.objective_mode
+    data.settings["subtract_mu_offer_from_producer_margin"] = (
+        cfg.objective_mode == OBJECTIVE_MODE_WITH_MU_AND_PENALTIES
+    )
+    data.settings["economic_quadratic_penalties_enabled"] = (
+        cfg.objective_mode == OBJECTIVE_MODE_WITH_MU_AND_PENALTIES
+    )
+    data.settings["algorithmic_proximal_penalties_enabled"] = (
+        cfg.objective_mode == OBJECTIVE_MODE_WITH_MU_AND_PENALTIES
+    )
 
     # Capacity-policy incentives
     data.settings["cap_keep_reward"] = float(cfg.cap_keep_reward)
@@ -497,6 +553,7 @@ def _append_detailed_iter_rows(
 
 
 def run(cfg: RunConfig) -> str:
+    cfg = _effective_run_config(cfg)
     method = cfg.method.lower().strip()
     if method != "gauss_seidel":
         raise ValueError(f"Unsupported method '{cfg.method}'. Supported: 'gauss_seidel'.")
@@ -523,6 +580,7 @@ def run(cfg: RunConfig) -> str:
     _apply_data_overrides(data, cfg)
 
     print(f"[CONFIG] Model type: Offer Model EPEC")
+    print(f"[CONFIG] objective_mode={cfg.objective_mode}")
     print(f"[CONFIG] Method: {method}")
     print(f"[CONFIG] Solver: {solver}  feastol={feastol:g}  opttol={opttol:g}")
     print(
@@ -645,6 +703,10 @@ def run(cfg: RunConfig) -> str:
                 "run_id":                run_id,
                 # --- Algorithm ---
                 "method":                method,
+                "objective_mode":        cfg.objective_mode,
+                "subtract_mu_offer_from_producer_margin": bool(
+                    data.settings.get("subtract_mu_offer_from_producer_margin", True)
+                ),
                 "iters":                 iters,
                 "omega":                 omega,
                 "adaptive_omega":        bool(cfg.adaptive_omega),
@@ -734,7 +796,18 @@ def run(cfg: RunConfig) -> str:
 
 
 def main() -> None:
-    run(RunConfig())
+    parser = argparse.ArgumentParser(description="Run the intertemporal EPEC model.")
+    parser.add_argument(
+        "--objective-mode",
+        choices=OBJECTIVE_MODES,
+        default=OBJECTIVE_MODE_WITH_MU_AND_PENALTIES,
+        help=(
+            "Use the historical objective with -mu_offer and penalty terms, "
+            "or remove both for the comparison run."
+        ),
+    )
+    args = parser.parse_args()
+    run(RunConfig(objective_mode=args.objective_mode))
 
 
 if __name__ == "__main__":

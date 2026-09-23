@@ -447,6 +447,13 @@ def _economic_objective(
     times = list(data.times or [])
     operating_times = mm._operating_times(data)
     kcap = mm._implied_capacity_path(data, times, candidate["dK_net"])
+    settings = data.settings or {}
+    subtract_mu = bool(
+        settings.get("subtract_mu_offer_from_producer_margin", True)
+    )
+    c_quad_q = float(settings.get("c_quad_q", 0.1))
+    c_quad_p = float(settings.get("c_quad_p", 0.1))
+    c_quad_a = float(settings.get("c_quad_a", 0.1))
     value = 0.0
     for tp in operating_times:
         beta = float((data.beta_t or {}).get(tp, 1.0))
@@ -463,12 +470,18 @@ def _economic_objective(
             flow = float(market_state["x"][(player, importer, tp)])
             period += (
                 float(market_state["lam"][(importer, tp)])
-                - mu
+                - (mu if subtract_mu else 0.0)
                 - c_man
                 - float(data.c_ship[(player, importer)])
             ) * flow
             markup = float(candidate["p_offer"][(player, importer, tp)]) - c_man
-            period -= 0.5 * 0.1 * markup * markup
+            period -= 0.5 * c_quad_p * markup * markup
+        offered = float(candidate["Q_offer"][(player, tp)])
+        period -= 0.5 * c_quad_q * (
+            offered - float(kcap[(player, tp)])
+        ) ** 2
+        declared_demand = float(candidate["a_bid"][(player, tp)])
+        period -= 0.5 * c_quad_a * (a_dem - declared_demand) ** 2
         period -= float((data.f_hold or {})[player]) * float(kcap[(player, tp)])
         if tp in mm._move_times(times):
             investment = max(float(candidate["dK_net"][(player, tp)]), 0.0)

@@ -632,6 +632,9 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
     c_quad_q = gp.Number(float(settings.get("c_quad_q", 0.0)))
     c_quad_p = gp.Number(float(settings.get("c_quad_p", 0.0)))
     c_quad_a = gp.Number(float(settings.get("c_quad_a", 0.0)))
+    subtract_mu_offer_from_producer_margin = bool(
+        settings.get("subtract_mu_offer_from_producer_margin", True)
+    )
 
     # Capacity-policy incentives (all optional; default off).
     # Positive cap_keep_reward and capex_subsidy encourage retaining/expanding capacity.
@@ -970,15 +973,17 @@ def build_model(data: ModelData, working_directory: str | None = None) -> ModelC
             ),
         )
 
-        # Producer term — subtract mu_offer so that capacity scarcity rents
-        # do not enter the exporter's objective.  Revenue is now based on the
-        # player's own offer price (via KKT substitution) rather than on lam,
-        # removing the incentive to withhold capacity.
+        # Producer term. The historical mode subtracts mu_offer; the comparison
+        # mode omits that subtraction and retains the full market-price margin.
         producer_term_t = Sum(
             [j, T_op],
             beta_p[T_op] * ytn_p[T_op] * (
                 lam_var[j, T_op]
-                - mu_offer[r, T_op]
+                - (
+                    mu_offer[r, T_op]
+                    if subtract_mu_offer_from_producer_margin
+                    else z
+                )
                 - c_man_t_p[r, T_op]
                 - c_ship[r, j]
             ) * x[r, j, T_op],

@@ -33,6 +33,12 @@ def nested_economic_objective(
 ) -> float:
     """Evaluate welfare using the model's KKT substitution for producer revenue."""
     value = _economic_objective(data, candidate, market_state, player)
+    if not bool(
+        (data.settings or {}).get(
+            "subtract_mu_offer_from_producer_margin", True
+        )
+    ):
+        return value
     for tp in mm._operating_times(data):
         weight = float((data.beta_t or {}).get(tp, 1.0)) * float(
             (data.years_to_next or {}).get(tp, 1.0)
@@ -284,7 +290,10 @@ def nested_best_response(
     )
     objective_scale = max(abs(reference_objective), 1.0)
     prox = {name: 0.0 for name in ("q", "p", "a", "dk")}
-    if proximal_coefficients:
+    proximal_penalties_enabled = bool(
+        (data.settings or {}).get("algorithmic_proximal_penalties_enabled", True)
+    )
+    if proximal_coefficients and proximal_penalties_enabled:
         for name in prox:
             prox[name] = float(proximal_coefficients.get(name, 0.0))
     prox_reference = proximal_reference_state or candidate

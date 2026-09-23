@@ -21,6 +21,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from matplotlib.lines import Line2D
+from matplotlib.patches import Patch
 from scipy.cluster.hierarchy import fcluster, linkage
 from scipy.spatial.distance import pdist, squareform
 from scipy.stats import pearsonr, spearmanr
@@ -45,6 +46,7 @@ REGION_LABELS = {
 }
 MARKET_YEARS = (2025, 2030, 2035, 2040)
 CAPACITY_YEARS = MARKET_YEARS
+HORIZON_WEIGHTS = {2025: 1.0 / 6.0, 2030: 1.0 / 3.0, 2035: 1.0 / 3.0, 2040: 1.0 / 6.0}
 ORDER_LABELS = {
     "ch-af-apac-eu-row-us": "CH-first",
     "af-eu-us-apac-row-ch": "AF-first",
@@ -65,12 +67,21 @@ ORDER_COLORS = {
     "EU-first": "#548235",
 }
 REGION_COLORS = {
-    "ch": "#C00000",
-    "af": "#BF9000",
-    "eu": "#4472C4",
-    "us": "#70AD47",
-    "apac": "#7030A0",
-    "row": "#7F7F7F",
+    "ch": "#CA6180",
+    "eu": "#FEFD99",
+    "us": "#FCB7C7",
+    "apac": "#B7A6D8",
+    "af": "#B8D99E",
+    "row": "#9ED3DC",
+}
+PAPER_REGION_ORDER = ("ch", "eu", "us", "apac", "af", "row")
+PAPER_REGION_NAMES = {
+    "ch": "China",
+    "eu": "Europe",
+    "us": "United States",
+    "apac": "Asia-Pacific",
+    "af": "Africa",
+    "row": "Rest of World",
 }
 PRICE_MARKERS = {0.8: "v", 1.0: "o", 1.2: "s"}
 BRANCH_RE = re.compile(r"pf(?P<pf>\d{3})_k(?P<k>\d{3})_a(?P<a>\d{3})$")
@@ -1135,6 +1146,66 @@ def plot_capacity_price_scatter(
     save_figure(figure, output_dir, "capacity_price_association_2040")
 
 
+def add_horizon_capacity_price_indicators(
+    candidate_metrics: pd.DataFrame,
+) -> pd.DataFrame:
+    result = candidate_metrics.copy()
+    result["average_total_capacity_2025_2040_gw"] = sum(
+        HORIZON_WEIGHTS[year] * result[f"total_capacity_{year}_gw"]
+        for year in CAPACITY_YEARS
+    )
+    result["average_demand_weighted_price_2025_2040_usd_per_kw"] = sum(
+        HORIZON_WEIGHTS[year]
+        * result[f"demand_weighted_price_{year}_usd_per_kw"]
+        for year in MARKET_YEARS
+    )
+    return result
+
+
+def plot_horizon_capacity_price_equilibria(
+    candidate_metrics: pd.DataFrame, output_dir: Path
+) -> None:
+    x_column = "average_total_capacity_2025_2040_gw"
+    y_column = "average_demand_weighted_price_2025_2040_usd_per_kw"
+
+    with plt.rc_context(
+        {
+            "font.family": "serif",
+            "font.serif": ["Times New Roman", "Times", "DejaVu Serif"],
+            "mathtext.fontset": "stix",
+            "axes.unicode_minus": False,
+        }
+    ):
+        figure, axis = plt.subplots(figsize=(7.4, 4.8))
+        axis.scatter(
+            candidate_metrics[x_column],
+            candidate_metrics[y_column],
+            s=62,
+            marker="x",
+            color="#A83232",
+            linewidth=1.8,
+            label="Converged equilibria",
+            zorder=3,
+        )
+
+        axis.set_xlabel("Average total manufacturing capacity [GW]", fontsize=15)
+        axis.set_ylabel("Demand-weighted price [$/kW]", fontsize=15)
+        axis.spines[["top", "right"]].set_visible(False)
+        axis.tick_params(axis="both", labelsize=15)
+        axis.grid(True, linestyle=":", alpha=0.5)
+        axis.legend(
+            loc="lower center",
+            bbox_to_anchor=(0.5, -0.34),
+            frameon=True,
+            framealpha=0.9,
+            fontsize=11.5,
+            handletextpad=0.45,
+            borderpad=0.45,
+        )
+        figure.subplots_adjust(left=0.17, right=0.98, top=0.96, bottom=0.31)
+        save_figure(figure, output_dir, "capacity_price_pathway_equilibria")
+
+
 def plot_pass_heatmap(branch_results: pd.DataFrame, output_dir: Path) -> None:
     orders = ("CH-first", "AF-first", "EU-first")
     price_factors = (0.8, 1.0, 1.2)
@@ -1469,110 +1540,289 @@ def plot_matched_contrasts(raw: pd.DataFrame, output_dir: Path) -> None:
     save_figure(figure, output_dir, "matched_candidate_contrasts")
 
 
-def plot_capacity_by_region(capacity_rows: pd.DataFrame, output_dir: Path) -> None:
-    figure, axes = plt.subplots(2, 3, figsize=(12.0, 7.2), sharex=True)
-    rng = np.random.default_rng(20260921)
-    for axis, region in zip(axes.flat, REGIONS):
-        data = [
-            capacity_rows[
-                (capacity_rows["region"] == region) & (capacity_rows["year"] == year)
-            ]["capacity_gw"].to_numpy()
-            for year in CAPACITY_YEARS
-        ]
-        box = axis.boxplot(
-            data,
-            tick_labels=[str(year) for year in CAPACITY_YEARS],
-            patch_artist=True,
-            widths=0.58,
-            whis=(0, 100),
-            showfliers=False,
-            medianprops={"color": "#202020", "linewidth": 1.5},
-            whiskerprops={"color": "#666666"},
-            capprops={"color": "#666666"},
-        )
-        for patch in box["boxes"]:
-            patch.set_facecolor(REGION_COLORS[region])
-            patch.set_alpha(0.65)
-            patch.set_edgecolor("#505050")
-        for position, values in enumerate(data, start=1):
-            jitter = rng.uniform(-0.07, 0.07, size=len(values))
-            axis.scatter(
-                np.full(len(values), position) + jitter,
-                values,
-                s=10,
-                color="#2F2F2F",
-                alpha=0.52,
-                linewidths=0,
-                zorder=3,
+def plot_regional_boxplots_paper_style(
+    frame: pd.DataFrame,
+    value_column: str,
+    years: tuple[int, ...],
+    ylabel: str,
+    output_dir: Path,
+    stem: str,
+) -> None:
+    with plt.rc_context(
+        {
+            "font.family": "serif",
+            "font.serif": ["Times New Roman", "Times", "DejaVu Serif"],
+            "mathtext.fontset": "stix",
+            "axes.unicode_minus": False,
+        }
+    ):
+        figure, axes = plt.subplots(3, 2, figsize=(7.0, 8.4))
+        rng = np.random.default_rng(20260921)
+        for index, (axis, region) in enumerate(zip(axes.flat, PAPER_REGION_ORDER)):
+            data = [
+                frame[(frame["region"] == region) & (frame["year"] == year)][
+                    value_column
+                ].to_numpy()
+                for year in years
+            ]
+            box = axis.boxplot(
+                data,
+                tick_labels=[str(year) for year in years],
+                patch_artist=True,
+                widths=0.58,
+                whis=(0, 100),
+                showfliers=False,
+                medianprops={"color": "#222222", "linewidth": 1.6},
+                whiskerprops={"color": "#6E6E6E", "linewidth": 1.0},
+                capprops={"color": "#6E6E6E", "linewidth": 1.0},
+                boxprops={"edgecolor": "#6E6E6E", "linewidth": 1.0},
             )
-        axis.set_title(REGION_LABELS[region])
-        axis.set_ylabel("Capacity (GW)")
-        axis.grid(axis="y", color="#E0E0E0", linewidth=0.6)
-        axis.tick_params(axis="x", rotation=20)
-    figure.suptitle("Capacity distributions by region and year")
-    figure.text(
-        0.5,
-        0.01,
-        "Whiskers show the observed minimum and maximum; charcoal dots are individual candidates and horizontal jitter is only for visibility.",
-        ha="center",
-        fontsize=8,
-        color="#555555",
+            for patch in box["boxes"]:
+                patch.set_facecolor(REGION_COLORS[region])
+                patch.set_alpha(0.78)
+            for position, values in enumerate(data, start=1):
+                jitter = rng.uniform(-0.07, 0.07, size=len(values))
+                axis.scatter(
+                    np.full(len(values), position) + jitter,
+                    values,
+                    s=10,
+                    color="#222222",
+                    alpha=0.45,
+                    linewidths=0,
+                    zorder=3,
+                )
+            axis.set_title(
+                PAPER_REGION_NAMES[region], fontsize=18, fontweight="normal"
+            )
+            if index % 2 == 0:
+                axis.set_ylabel(ylabel, fontsize=18)
+            axis.spines[["top", "right"]].set_visible(False)
+            axis.set_axisbelow(True)
+            axis.grid(True, linestyle=":", alpha=0.5)
+            axis.tick_params(axis="both", labelsize=15)
+
+        figure.subplots_adjust(
+            left=0.13, right=0.98, top=0.95, bottom=0.07, wspace=0.34, hspace=0.50
+        )
+        save_figure(figure, output_dir, stem)
+
+
+def plot_capacity_by_region(capacity_rows: pd.DataFrame, output_dir: Path) -> None:
+    plot_regional_boxplots_paper_style(
+        capacity_rows,
+        "capacity_gw",
+        CAPACITY_YEARS,
+        "Capacity [GW]",
+        output_dir,
+        "boxplots_capacity_by_region",
     )
-    figure.tight_layout(rect=(0, 0.04, 1, 0.96))
-    save_figure(figure, output_dir, "boxplots_capacity_by_region")
 
 
 def plot_prices_by_region(price_rows: pd.DataFrame, output_dir: Path) -> None:
-    figure, axes = plt.subplots(2, 3, figsize=(12.0, 7.2), sharex=True)
-    rng = np.random.default_rng(20260921)
-    for axis, region in zip(axes.flat, REGIONS):
-        data = [
-            price_rows[
-                (price_rows["region"] == region) & (price_rows["year"] == year)
-            ]["price_usd_per_kw"].to_numpy()
-            for year in MARKET_YEARS
-        ]
-        box = axis.boxplot(
-            data,
-            tick_labels=[str(year) for year in MARKET_YEARS],
-            patch_artist=True,
-            widths=0.58,
-            whis=(0, 100),
-            showfliers=False,
-            medianprops={"color": "#202020", "linewidth": 1.5},
-            whiskerprops={"color": "#666666"},
-            capprops={"color": "#666666"},
-        )
-        for patch in box["boxes"]:
-            patch.set_facecolor(REGION_COLORS[region])
-            patch.set_alpha(0.65)
-            patch.set_edgecolor("#505050")
-        for position, values in enumerate(data, start=1):
-            jitter = rng.uniform(-0.07, 0.07, size=len(values))
-            axis.scatter(
-                np.full(len(values), position) + jitter,
-                values,
-                s=10,
-                color="#2F2F2F",
-                alpha=0.52,
-                linewidths=0,
-                zorder=3,
-            )
-        axis.set_title(REGION_LABELS[region])
-        axis.set_ylabel("Clearing price (USD/kW)")
-        axis.grid(axis="y", color="#E0E0E0", linewidth=0.6)
-        axis.tick_params(axis="x", rotation=20)
-    figure.suptitle("Market-price distributions by region and year")
-    figure.text(
-        0.5,
-        0.01,
-        "Whiskers show the observed minimum and maximum; charcoal dots are individual candidates and horizontal jitter is only for visibility.",
-        ha="center",
-        fontsize=8,
-        color="#555555",
+    plot_regional_boxplots_paper_style(
+        price_rows,
+        "price_usd_per_kw",
+        MARKET_YEARS,
+        "Price [$/kW]",
+        output_dir,
+        "boxplots_prices_by_region",
     )
-    figure.tight_layout(rect=(0, 0.04, 1, 0.96))
-    save_figure(figure, output_dir, "boxplots_prices_by_region")
+
+
+def plot_regional_equilibrium_bands_paper_style(
+    frame: pd.DataFrame,
+    value_column: str,
+    years: tuple[int, ...],
+    ylabel: str,
+    band_color: str,
+    output_dir: Path,
+    stem: str,
+) -> None:
+    with plt.rc_context(
+        {
+            "font.family": "serif",
+            "font.serif": ["Times New Roman", "Times", "DejaVu Serif"],
+            "mathtext.fontset": "stix",
+            "axes.unicode_minus": False,
+        }
+    ):
+        figure, axes = plt.subplots(3, 2, figsize=(7.0, 8.4))
+        rng = np.random.default_rng(20260921)
+        x = np.arange(len(years), dtype=float)
+        for index, (axis, region) in enumerate(zip(axes.flat, PAPER_REGION_ORDER)):
+            data = [
+                frame[(frame["region"] == region) & (frame["year"] == year)][
+                    value_column
+                ].to_numpy()
+                for year in years
+            ]
+            matrix = np.column_stack(data)
+            observed_minimum = matrix.min(axis=0)
+            observed_maximum = matrix.max(axis=0)
+            q10, q25, median, q75, q90 = np.quantile(
+                matrix, [0.10, 0.25, 0.50, 0.75, 0.90], axis=0
+            )
+            axis.fill_between(
+                x,
+                observed_minimum,
+                observed_maximum,
+                color=band_color,
+                alpha=0.20,
+                linewidth=0,
+                zorder=0,
+            )
+            axis.fill_between(
+                x,
+                q10,
+                q90,
+                color=band_color,
+                alpha=0.38,
+                linewidth=0,
+                zorder=1,
+            )
+            axis.fill_between(
+                x,
+                q25,
+                q75,
+                color=band_color,
+                alpha=0.90,
+                linewidth=0,
+                zorder=2,
+            )
+            for boundary in (
+                observed_minimum,
+                observed_maximum,
+                q10,
+                q90,
+                q25,
+                q75,
+            ):
+                axis.plot(
+                    x,
+                    boundary,
+                    color="#C7C7C7",
+                    linewidth=0.65,
+                    zorder=3,
+                )
+            axis.plot(
+                x,
+                median,
+                color="#222222",
+                linewidth=1.8,
+                marker="o",
+                markersize=4.5,
+                zorder=4,
+            )
+            for position, values in enumerate(data):
+                jitter = rng.uniform(-0.055, 0.055, size=len(values))
+                axis.scatter(
+                    np.full(len(values), x[position]) + jitter,
+                    values,
+                    s=10,
+                    color="#222222",
+                    alpha=0.45,
+                    linewidths=0,
+                    zorder=3,
+                )
+
+            axis.set_title(
+                PAPER_REGION_NAMES[region], fontsize=18, fontweight="normal"
+            )
+            axis.set_xticks(x, [str(year) for year in years])
+            if index % 2 == 0:
+                axis.set_ylabel(ylabel, fontsize=18)
+            axis.spines[["top", "right"]].set_visible(False)
+            axis.set_axisbelow(True)
+            axis.grid(True, linestyle=":", alpha=0.5)
+            axis.tick_params(axis="both", labelsize=15)
+
+        legend_handles = [
+            Patch(
+                facecolor=band_color,
+                alpha=0.20,
+                edgecolor="#C7C7C7",
+                linewidth=0.65,
+                label="Total range",
+            ),
+            Patch(
+                facecolor=band_color,
+                alpha=0.38,
+                edgecolor="#C7C7C7",
+                linewidth=0.65,
+                label="10th–90th percentiles",
+            ),
+            Patch(
+                facecolor=band_color,
+                alpha=0.90,
+                edgecolor="#C7C7C7",
+                linewidth=0.65,
+                label="25th–75th percentiles",
+            ),
+            Line2D(
+                [0],
+                [0],
+                color="#222222",
+                linewidth=1.8,
+                marker="o",
+                markersize=4.5,
+                label="Median",
+            ),
+            Line2D(
+                [0],
+                [0],
+                color="#222222",
+                linestyle="none",
+                marker="o",
+                markersize=4.0,
+                alpha=0.45,
+                label="Individual equilibria",
+            ),
+        ]
+        legend_handles = [legend_handles[index] for index in (0, 3, 1, 4, 2)]
+        figure.legend(
+            handles=legend_handles,
+            loc="lower center",
+            ncol=3,
+            fontsize=10.2,
+            frameon=True,
+            framealpha=0.9,
+            handlelength=1.4,
+            handletextpad=0.45,
+            columnspacing=0.9,
+            borderpad=0.45,
+            labelspacing=0.35,
+            bbox_to_anchor=(0.5, 0.075),
+        )
+        figure.subplots_adjust(
+            left=0.13, right=0.98, top=0.95, bottom=0.21, wspace=0.34, hspace=0.50
+        )
+        save_figure(figure, output_dir, stem)
+
+
+def plot_capacity_bands_by_region(
+    capacity_rows: pd.DataFrame, output_dir: Path
+) -> None:
+    plot_regional_equilibrium_bands_paper_style(
+        capacity_rows,
+        "capacity_gw",
+        CAPACITY_YEARS,
+        "Capacity [GW]",
+        "#7570B3",
+        output_dir,
+        "equilibrium_bands_capacity_by_region",
+    )
+
+
+def plot_price_bands_by_region(price_rows: pd.DataFrame, output_dir: Path) -> None:
+    plot_regional_equilibrium_bands_paper_style(
+        price_rows,
+        "price_usd_per_kw",
+        MARKET_YEARS,
+        "Price [$/kW]",
+        "#A83232",
+        output_dir,
+        "equilibrium_bands_prices_by_region",
+    )
 
 
 def plot_pca(assignments: pd.DataFrame, pca_info: dict, output_dir: Path) -> None:
@@ -1887,11 +2137,12 @@ def main() -> None:
         candidates, candidate_metrics
     )
     candidate_metrics = candidate_metrics.merge(
-        clusters[["candidate", "family", "pc1_score", "pc2_score"]],
+        clusters[["candidate", "figure_code", "family", "pc1_score", "pc2_score"]],
         on="candidate",
         how="left",
         validate="one_to_one",
     )
+    candidate_metrics = add_horizon_capacity_price_indicators(candidate_metrics)
 
     tables = {
         "candidate_metrics.csv": candidate_metrics,
@@ -1937,7 +2188,10 @@ def main() -> None:
     )
     plot_capacity_by_region(capacity_rows, output_dir)
     plot_prices_by_region(price_rows, output_dir)
+    plot_capacity_bands_by_region(capacity_rows, output_dir)
+    plot_price_bands_by_region(price_rows, output_dir)
     plot_capacity_price_scatter(candidate_metrics, associations, output_dir)
+    plot_horizon_capacity_price_equilibria(candidate_metrics, output_dir)
     plot_pass_heatmap(branch_results, output_dir)
     plot_algorithm_convergence(
         movement_history,

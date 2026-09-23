@@ -1128,10 +1128,25 @@ def plot_welfare_cs_ps(
     save_figure(fig, output_dir, "welfare_cs_ps_decomposition", dpi)
 
 
-def write_plot_index(candidates: list[Candidate], plots_dir: Path) -> None:
+def candidate_output_dir(
+    candidate: Candidate,
+    plots_dir: Path,
+    plots_in_profile_dirs: bool,
+) -> Path:
+    if plots_in_profile_dirs:
+        return candidate.source_path.parent / "plots"
+    return plots_dir.joinpath(*candidate.output_dir_parts)
+
+
+def write_plot_index(
+    candidate_outputs: list[tuple[Candidate, Path]], plots_dir: Path
+) -> None:
     rows = []
-    for candidate in candidates:
-        relative_dir = Path(*candidate.output_dir_parts)
+    for candidate, output_dir in candidate_outputs:
+        try:
+            relative_dir = output_dir.relative_to(plots_dir)
+        except ValueError:
+            relative_dir = output_dir.relative_to(ROOT_DIR)
         rows.append(
             {
                 "candidate": candidate.label,
@@ -1170,6 +1185,14 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--plots-in-profile-dirs",
+        action="store_true",
+        help=(
+            "Write each accepted candidate's figures to a plots/ directory next "
+            "to its selected profile. The plot index is still written to plots-dir."
+        ),
+    )
+    parser.add_argument(
         "--rebuild-planner",
         action="store_true",
         help="Re-solve the corrected global-planner benchmark even if the cache matches.",
@@ -1189,11 +1212,12 @@ def main() -> None:
         manifest = workflow_manifest
     else:
         manifest = load_json(package_dir / "source_metadata" / "factorial" / "manifest.json")
-    input_path = resolve_recorded_path(str(manifest["input"]))
-    recorded_hash = str(manifest["input_sha256"]).upper()
+    protocol = manifest.get("protocol", manifest)
+    input_path = resolve_recorded_path(str(protocol["input"]))
+    recorded_hash = str(protocol["input_sha256"]).upper()
     if sha256(input_path) != recorded_hash:
         raise RuntimeError(f"Corrected input hash no longer matches the manifest: {input_path}")
-    terminal_salvage_fraction = float(manifest["terminal_salvage_fraction"])
+    terminal_salvage_fraction = float(protocol["terminal_salvage_fraction"])
     data = configure_model_data(input_path, terminal_salvage_fraction)
 
     if args.rebuild_planner or not planner_is_current(
@@ -1213,8 +1237,18 @@ def main() -> None:
     candidates = load_candidates(package_dir, workflow_manifest)
     plots_dir.mkdir(parents=True, exist_ok=True)
 
-    for index, candidate in enumerate(candidates, start=1):
-        output_dir = plots_dir.joinpath(*candidate.output_dir_parts)
+    candidate_outputs = [
+        (
+            candidate,
+            candidate_output_dir(
+                candidate,
+                plots_dir,
+                args.plots_in_profile_dirs,
+            ),
+        )
+        for candidate in candidates
+    ]
+    for index, (candidate, output_dir) in enumerate(candidate_outputs, start=1):
         output_dir.mkdir(parents=True, exist_ok=True)
         plot_prices(candidate, planner_regions, data, output_dir, args.dpi)
         plot_welfare_cs_ps(
@@ -1236,7 +1270,7 @@ def main() -> None:
         plot_capacity(candidate, planner_regions, output_dir, args.dpi)
         print(f"[{index:02d}/{len(candidates):02d}] {candidate.label}")
 
-    write_plot_index(candidates, plots_dir)
+    write_plot_index(candidate_outputs, plots_dir)
     print(f"Generated {len(candidates) * 4} figures in PNG and PDF: {plots_dir}")
 
 
