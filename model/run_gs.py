@@ -135,6 +135,10 @@ class RunConfig:
     # Eliminates mu_offer gaming; useful as a diagnostic run.
     fix_q_offer_to_kcap: bool = True
 
+    # Competitive-offer counterfactual: every bilateral offer equals the
+    # exporter's period-specific marginal manufacturing cost.
+    fix_p_offer_to_c_man_t: bool = False
+
     # Diagnostic option: fix the LLP capacity scarcity multiplier mu_offer to zero
     # for all regions and periods, forcing prices to emerge only from p_offer,
     # shipping costs, and the small eps_x regularization term.
@@ -361,6 +365,7 @@ def _apply_data_overrides(data, cfg: RunConfig) -> None:
 
     # Force Q_offer == Kcap (no quantity withholding)
     data.settings["fix_q_offer_to_kcap"] = bool(cfg.fix_q_offer_to_kcap)
+    data.settings["fix_p_offer_to_c_man_t"] = bool(cfg.fix_p_offer_to_c_man_t)
 
     # Diagnostic: suppress capacity scarcity rents in LLP pricing.
     data.settings["force_mu_offer_zero"] = bool(cfg.force_mu_offer_zero)
@@ -736,6 +741,7 @@ def run(cfg: RunConfig) -> str:
                 # --- Strategic demand bidding ---
                 "fix_a_bid_to_true_dem": bool(data.settings.get("fix_a_bid_to_true_dem", False)),
                 "fix_q_offer_to_kcap":   bool(data.settings.get("fix_q_offer_to_kcap", False)),
+                "fix_p_offer_to_c_man_t": bool(data.settings.get("fix_p_offer_to_c_man_t", False)),
                 "force_mu_offer_zero":   bool(data.settings.get("force_mu_offer_zero", False)),
                 # --- Penalties and Scalers ---
                 "c_pen_q":               float(cfg.c_pen_q),

@@ -22,8 +22,10 @@ DEFAULT_RUN_ROOT = ROOT / "outputs" / "clean_stage2_factorial_20260923_123037"
 PREVIOUS_ANALYSIS = (
     ROOT / "outputs" / "new_equilibria" / "statistical_analysis_20260921"
 )
+DEFAULT_PLANNER_RESULTS = ROOT / "outputs" / "llp_planner" / "llp_planner_results.xlsx"
 
 from scripts import analyze_equilibrium_ranges as base
+from scripts.stage2_results_selection import excluded_candidate_ids
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -54,9 +56,15 @@ def collect_candidates(
     manifest = load_json(run_root / "manifest.json")
     candidates: list[dict[str, Any]] = []
     accepted = [row for row in manifest["results"] if row["status"] == "accepted"]
+    excluded = excluded_candidate_ids(run_root)
+    accepted_ids = {f"{row['sequence']}/{row['branch']}" for row in accepted}
+    if not excluded <= accepted_ids:
+        raise ValueError(f"Reporting exclusions are not accepted branches: {excluded - accepted_ids}")
     for result in accepted:
         sequence = str(result["sequence"])
         branch = str(result["branch"])
+        if f"{sequence}/{branch}" in excluded:
+            continue
         order = base.ORDER_LABELS[sequence]
         price_factor, capacity_weight, damping = base.parse_branch(branch)
         profile_path = resolve_recorded_path(result["selected_profile"], run_root)
@@ -107,8 +115,8 @@ def collect_candidates(
             }
         )
 
-    if len(candidates) != len(accepted):
-        raise RuntimeError("Not all accepted clean profiles were loaded")
+    if len(candidates) != len(accepted) - len(excluded):
+        raise RuntimeError("Not all reported clean profiles were loaded")
     if not candidates:
         raise RuntimeError("No accepted clean profiles found")
     return candidates, manifest
@@ -322,6 +330,499 @@ def plot_clean_search_diagnostics(
     base.save_figure(figure, output_dir, "algorithm_convergence_diagnostics")
 
 
+def load_planner_prices(path: Path, years: tuple[int, ...]) -> pd.DataFrame:
+    """Read the regional planner benchmark prices."""
+    references = pd.read_excel(
+        path, sheet_name="regions", usecols=["r", "t", "lam"]
+    ).rename(
+        columns={
+            "r": "region",
+            "t": "year",
+            "lam": "planner_price_usd_per_kw",
+        }
+    )
+    references["region"] = references["region"].astype(str).str.lower().str.strip()
+    references["year"] = pd.to_numeric(references["year"], errors="raise").astype(int)
+    if references.duplicated(["region", "year"]).any():
+        raise ValueError(f"Duplicate planner region-year records in {path}")
+    expected = pd.MultiIndex.from_product(
+        [base.PAPER_REGION_ORDER, years], names=["region", "year"]
+    )
+    references = references.set_index(["region", "year"]).reindex(expected)
+    if not np.isfinite(references.to_numpy(dtype=float)).all():
+        raise ValueError(f"Missing or non-finite planner prices in {path}")
+    return references.reset_index()
+
+
+def welfare_component_tables(
+    candidates: list[dict[str, Any]], manifest: dict[str, Any],
+    run_root: Path, planner_path: Path,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Discounted welfare components and planner comparisons in billion USD."""
+    from plots.plot_equilibrium_paper_figures import (
+        Candidate, candidate_welfare_components, configure_model_data,
+        load_planner, planner_welfare_components, profile_records, sha256,
+    )
+
+    protocol = manifest["protocol"]
+    input_text = str(protocol["input"]).replace("\\", "/")
+    input_path = Path(input_text)
+    if not input_path.is_absolute():
+        for root in (ROOT, ROOT.parent, run_root):
+            candidate_path = (root / input_path).resolve()
+            if candidate_path.is_file():
+                input_path = candidate_path
+                break
+    if not input_path.is_file():
+        raise FileNotFoundError(f"Stage-2 calibration workbook: {input_text}")
+    recorded_hash = str(protocol["input_sha256"]).upper()
+    if sha256(input_path) != recorded_hash:
+        raise ValueError("Stage-2 calibration workbook differs from the run manifest")
+    planner_meta = pd.read_excel(planner_path, sheet_name="meta")
+    planner_details = {
+        str(row["key"]): str(row["value"])
+        for _, row in planner_meta.iterrows()
+    }
+    planner_input_text = planner_details.get("excel_path", planner_details.get("input"))
+    if planner_input_text is None:
+        raise ValueError("Planner benchmark has no recorded calibration workbook")
+    planner_input = Path(planner_input_text)
+    if not planner_input.is_file() or sha256(planner_input) != recorded_hash:
+        raise ValueError("Planner and Stage-2 calibration workbooks do not match")
+    if not np.isclose(
+        float(planner_details["terminal_salvage_fraction"]),
+        float(protocol["terminal_salvage_fraction"]),
+    ):
+        raise ValueError("Planner and Stage-2 terminal salvage settings do not match")
+    data = configure_model_data(
+        input_path, float(protocol["terminal_salvage_fraction"])
+    )
+    planner_regions, planner_flows = load_planner(planner_path)
+    planner = planner_welfare_components(planner_regions, planner_flows, data)
+    planner_index = planner_regions.set_index(["r", "t"])
+    periods = ("2025", "2030", "2035", "2040")
+
+    def period_weight(period: str) -> float:
+        return float(data.beta_t[period]) * float(data.years_to_next[period])
+
+    planner_capacity_cost = {
+        region: sum(
+            period_weight(period) * (
+                float(data.f_hold[region])
+                * float(planner_index.loc[(region, period), "Kcap"])
+                + float(data.c_inv[region])
+                * float(planner_index.loc[(region, period), "Icap_report"])
+            )
+            for period in periods
+        )
+        for region in base.PAPER_REGION_ORDER
+    }
+
+    selected = {
+        f"{result['sequence']}/{result['branch']}": result
+        for result in manifest["results"] if result["status"] == "accepted"
+    }
+    rows: list[dict[str, Any]] = []
+    level_rows: list[dict[str, Any]] = []
+    for reported in candidates:
+        candidate_id = reported["candidate"]
+        result = selected[candidate_id]
+        source = resolve_recorded_path(result["selected_profile"], run_root)
+        profile = Candidate(
+            sequence=reported["sequence"], branch=reported["branch"],
+            sweep=int(result["selected_sweep"]), source_path=source,
+            payload=load_json(source),
+        )
+        components = candidate_welfare_components(profile, data)
+        _, _, capacities, _, net_capacity_changes = profile_records(profile)
+        for region in base.PAPER_REGION_ORDER:
+            capacity_cost = sum(
+                period_weight(period) * (
+                    float(data.f_hold[region]) * capacities[(region, period)]
+                    + float(data.c_inv[region])
+                    * max(net_capacity_changes[(region, period)], 0.0)
+                )
+                for period in periods
+            )
+            level_rows.append({
+                "candidate": candidate_id,
+                "region": region,
+                "region_label": base.PAPER_REGION_NAMES[region],
+                "consumer_surplus_billion_usd_pv": components[region][0] / 1e3,
+                "producer_surplus_billion_usd_pv":
+                    (components[region][1] + capacity_cost) / 1e3,
+                "capacity_cost_billion_usd_pv": capacity_cost / 1e3,
+            })
+            planner_total = sum(planner[region])
+            if np.isclose(planner_total, 0.0):
+                raise ValueError(f"Cannot normalize zero planner welfare: {region}")
+            for index, component in enumerate((
+                "Consumer surplus", "Producer surplus less capacity costs"
+            )):
+                difference = components[region][index] - planner[region][index]
+                rows.append({
+                    "candidate": candidate_id,
+                    "region": region,
+                    "region_label": base.PAPER_REGION_NAMES[region],
+                    "component": component,
+                    "delta_billion_usd_pv": difference / 1e3,
+                    "delta_percent_of_planner_regional_welfare":
+                        100.0 * difference / planner_total,
+                })
+    observations = pd.DataFrame(rows)
+    if len(observations) != len(candidates) * len(base.PAPER_REGION_ORDER) * 2:
+        raise RuntimeError("Incomplete welfare component observations")
+    summaries = []
+    for (region, component), group in observations.groupby(["region", "component"]):
+        values = group["delta_billion_usd_pv"].to_numpy(float)
+        q10, q25, median, q75, q90 = np.quantile(
+            values, [0.10, 0.25, 0.50, 0.75, 0.90]
+        )
+        summaries.append({
+            "region": region,
+            "region_label": base.PAPER_REGION_NAMES[region],
+            "component": component,
+            "n": len(values),
+            "minimum_billion_usd_pv": values.min(),
+            "p10_billion_usd_pv": q10,
+            "p25_billion_usd_pv": q25,
+            "median_billion_usd_pv": median,
+            "p75_billion_usd_pv": q75,
+            "p90_billion_usd_pv": q90,
+            "maximum_billion_usd_pv": values.max(),
+        })
+    levels = pd.DataFrame(level_rows)
+    comparison = []
+    for region in base.PAPER_REGION_ORDER:
+        subset = levels[levels["region"] == region]
+        comparison.append({
+            "region": region,
+            "region_label": base.PAPER_REGION_NAMES[region],
+            "n_equilibria": len(subset),
+            "planner_cs_billion_usd_pv": planner[region][0] / 1e3,
+            "median_strategic_cs_billion_usd_pv":
+                subset["consumer_surplus_billion_usd_pv"].median(),
+            "planner_ps_billion_usd_pv":
+                (planner[region][1] + planner_capacity_cost[region]) / 1e3,
+            "median_strategic_ps_billion_usd_pv":
+                subset["producer_surplus_billion_usd_pv"].median(),
+            "planner_capacity_cost_billion_usd_pv":
+                planner_capacity_cost[region] / 1e3,
+            "median_strategic_capacity_cost_billion_usd_pv":
+                subset["capacity_cost_billion_usd_pv"].median(),
+        })
+    return observations, pd.DataFrame(summaries), levels, pd.DataFrame(comparison)
+
+
+def plot_welfare_component_distributions(
+    summary: pd.DataFrame, output_dir: Path,
+) -> None:
+    """Two aligned panels make the scale of CS losses and PS gains comparable."""
+    colors = {
+        "Consumer surplus": "#B43C38",
+        "Producer surplus less capacity costs": "#2E6F40",
+    }
+    regions = base.PAPER_REGION_ORDER
+    with plt.rc_context({
+        "font.family": "serif",
+        "font.serif": ["Times New Roman", "Times", "DejaVu Serif"],
+        "axes.unicode_minus": False,
+    }):
+        fig, axes = plt.subplots(1, 2, figsize=(10.4, 5.8), sharex=True, sharey=True)
+        y = np.arange(len(regions))
+        for ax, component in zip(axes, colors):
+            color = colors[component]
+            frame = summary[summary["component"] == component].set_index("region")
+            for position, region in enumerate(regions):
+                row = frame.loc[region]
+                ax.plot(
+                    [row["minimum_billion_usd_pv"], row["maximum_billion_usd_pv"]],
+                    [position, position], color=color, linewidth=3.0, alpha=0.22,
+                    solid_capstyle="round", zorder=2,
+                )
+                ax.plot(
+                    [row["p10_billion_usd_pv"], row["p90_billion_usd_pv"]],
+                    [position, position], color=color, linewidth=8.0, alpha=0.42,
+                    solid_capstyle="round", zorder=3,
+                )
+                ax.plot(
+                    [row["p25_billion_usd_pv"], row["p75_billion_usd_pv"]],
+                    [position, position], color=color, linewidth=13.0,
+                    solid_capstyle="round", zorder=4,
+                )
+                ax.scatter(
+                    row["median_billion_usd_pv"], position, s=45,
+                    facecolor="white", edgecolor="#202020", linewidth=1.4,
+                    zorder=5,
+                )
+            ax.axvline(0, color="#333333", linewidth=1.1, zorder=1)
+            title = (
+                "Producer surplus\nless capacity costs"
+                if component.startswith("Producer") else component
+            )
+            ax.set_title(title, fontsize=14, color=color)
+            ax.set_yticks(y, [base.PAPER_REGION_NAMES[r] for r in regions])
+            ax.grid(axis="x", linestyle=":", color="#D5D5D5")
+            ax.set_axisbelow(True)
+            ax.tick_params(axis="both", labelsize=11.5)
+            ax.spines[["top", "right", "left"]].set_visible(False)
+            ax.tick_params(axis="y", length=0)
+        axes[0].invert_yaxis()
+        limits = summary[["minimum_billion_usd_pv", "maximum_billion_usd_pv"]].to_numpy(float)
+        span = limits.max() - limits.min()
+        axes[0].set_xlim(limits.min() - 0.04 * span, limits.max() + 0.04 * span)
+        fig.supxlabel("Change from global welfare maximization [billion USD, discounted]", fontsize=12.5, y=0.14)
+        legend = [
+            Line2D([0], [0], color="#686868", linewidth=3, alpha=0.4, label="Total range"),
+            Line2D([0], [0], color="#686868", linewidth=8, alpha=0.55, label="10th–90th percentiles"),
+            Line2D([0], [0], color="#686868", linewidth=13, label="25th–75th percentiles"),
+            Line2D([0], [0], marker="o", linestyle="none", markerfacecolor="white",
+                   markeredgecolor="#202020", label="Median"),
+        ]
+        fig.legend(handles=legend, loc="lower center", bbox_to_anchor=(0.5, 0.005),
+                   ncol=4, frameon=True, fontsize=10.5)
+        fig.subplots_adjust(left=0.16, right=0.98, top=0.89, bottom=0.22, wspace=0.08)
+        base.save_figure(fig, output_dir, "welfare_cs_ps_distributions")
+
+
+def relative_welfare_component_tables(
+    levels: pd.DataFrame, comparison: pd.DataFrame,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """CS/PS changes as shares of each region's planner welfare."""
+    planner = comparison.set_index("region")
+    rows: list[dict[str, Any]] = []
+    for record in levels.itertuples(index=False):
+        reference = planner.loc[record.region]
+        denominator = (
+            reference["planner_cs_billion_usd_pv"]
+            + reference["planner_ps_billion_usd_pv"]
+            - reference["planner_capacity_cost_billion_usd_pv"]
+        )
+        if denominator <= 0:
+            raise ValueError(f"Nonpositive planner welfare: {record.region}")
+        for component, observed, baseline in (
+            (
+                "Consumer surplus", record.consumer_surplus_billion_usd_pv,
+                reference["planner_cs_billion_usd_pv"]
+            ),
+            (
+                "Producer surplus", record.producer_surplus_billion_usd_pv,
+                reference["planner_ps_billion_usd_pv"]
+            ),
+        ):
+            rows.append({
+                "candidate": record.candidate,
+                "region": record.region,
+                "region_label": record.region_label,
+                "component": component,
+                "change_percent_of_planner_regional_welfare":
+                    100.0 * (observed - baseline) / denominator,
+            })
+    observations = pd.DataFrame(rows)
+    summaries = []
+    for (region, component), group in observations.groupby(["region", "component"]):
+        values = group["change_percent_of_planner_regional_welfare"].to_numpy(float)
+        q10, q25, median, q75, q90 = np.quantile(
+            values, [0.10, 0.25, 0.50, 0.75, 0.90]
+        )
+        summaries.append({
+            "region": region,
+            "region_label": base.PAPER_REGION_NAMES[region],
+            "component": component,
+            "n": len(values),
+            "minimum": values.min(), "p10": q10, "p25": q25,
+            "median": median, "p75": q75, "p90": q90,
+            "maximum": values.max(),
+        })
+    return observations, pd.DataFrame(summaries)
+
+
+def plot_relative_welfare_components(
+    summary: pd.DataFrame, output_dir: Path,
+) -> None:
+    """Show the size and dispersion of CS and PS effects on a common scale."""
+    colors = {"Consumer surplus": "#B43C38", "Producer surplus": "#2E6F40"}
+    regions = base.PAPER_REGION_ORDER
+    values = summary[["minimum", "maximum"]].to_numpy(float)
+    limit = max(5.0, 5.0 * np.ceil(np.abs(values).max() / 5.0))
+    with plt.rc_context({
+        "font.family": "serif",
+        "font.serif": ["Times New Roman", "Times", "DejaVu Serif"],
+        "axes.unicode_minus": False,
+    }):
+        fig, axes = plt.subplots(1, 2, figsize=(9.5, 5.5), sharex=True, sharey=True)
+        y = np.arange(len(regions))
+        for ax, component in zip(axes, colors):
+            color = colors[component]
+            frame = summary[summary["component"] == component].set_index("region")
+            for position, region in enumerate(regions):
+                row = frame.loc[region]
+                ax.plot(
+                    [row["minimum"], row["maximum"]], [position, position],
+                    color=color, linewidth=3, alpha=0.22, solid_capstyle="round",
+                    zorder=2,
+                )
+                ax.plot(
+                    [row["p10"], row["p90"]], [position, position],
+                    color=color, linewidth=8, alpha=0.42, solid_capstyle="round",
+                    zorder=3,
+                )
+                ax.plot(
+                    [row["p25"], row["p75"]], [position, position],
+                    color=color, linewidth=13, solid_capstyle="round", zorder=4,
+                )
+                ax.scatter(
+                    row["median"], position, s=45, facecolor="white",
+                    edgecolor="#202020", linewidth=1.4, zorder=5,
+                )
+            ax.axvline(0, color="#333333", linewidth=1.1, zorder=1)
+            ax.set_title(component, fontsize=15, color=color)
+            ax.set_yticks(y, [base.PAPER_REGION_NAMES[r] for r in regions])
+            ax.set_xlim(-limit, limit)
+            ax.grid(axis="x", linestyle=":", color="#D5D5D5")
+            ax.set_axisbelow(True)
+            ax.tick_params(axis="both", labelsize=11.5)
+            ax.spines[["top", "right", "left"]].set_visible(False)
+            ax.tick_params(axis="y", length=0)
+        axes[0].invert_yaxis()
+        fig.supxlabel(
+            "Change [% of regional welfare under global welfare maximization]",
+            fontsize=12.5, y=0.14,
+        )
+        legend = [
+            Line2D([0], [0], color="#686868", linewidth=3, alpha=0.4,
+                   label="Total range"),
+            Line2D([0], [0], color="#686868", linewidth=8, alpha=0.55,
+                   label="10th–90th percentiles"),
+            Line2D([0], [0], color="#686868", linewidth=13,
+                   label="25th–75th percentiles"),
+            Line2D([0], [0], marker="o", linestyle="none",
+                   markerfacecolor="white", markeredgecolor="#202020",
+                   label="Median"),
+        ]
+        fig.legend(handles=legend, loc="lower center", bbox_to_anchor=(0.5, 0.005),
+                   ncol=4, frameon=True, fontsize=10)
+        fig.subplots_adjust(left=0.19, right=0.98, top=0.89, bottom=0.23, wspace=0.08)
+        base.save_figure(fig, output_dir, "welfare_cs_ps_relative_distributions")
+
+
+def absolute_welfare_difference_table(
+    levels: pd.DataFrame, comparison: pd.DataFrame,
+) -> pd.DataFrame:
+    """Component-level strategic-minus-planner changes in discounted billion USD."""
+    planner = comparison.set_index("region")
+    rows: list[dict[str, Any]] = []
+    for record in levels.itertuples(index=False):
+        reference = planner.loc[record.region]
+        for component, observed, baseline in (
+            (
+                "Consumer surplus", record.consumer_surplus_billion_usd_pv,
+                reference["planner_cs_billion_usd_pv"]
+            ),
+            (
+                "Producer surplus", record.producer_surplus_billion_usd_pv,
+                reference["planner_ps_billion_usd_pv"]
+            ),
+        ):
+            rows.append({
+                "candidate": record.candidate,
+                "region": record.region,
+                "region_label": record.region_label,
+                "component": component,
+                "change_billion_usd_pv": observed - baseline,
+            })
+    return pd.DataFrame(rows)
+
+
+def plot_welfare_difference_boxplots(
+    observations: pd.DataFrame, output_dir: Path, *,
+    value_column: str, xlabel: str, legend_prefix: str,
+    stem: str, symmetric_axis: bool,
+    abbreviate_components: bool = False, compact: bool = False,
+) -> None:
+    """Paired horizontal boxplots with full observed-range whiskers."""
+    colors = {"Consumer surplus": "#B43C38", "Producer surplus": "#2E6F40"}
+    component_labels = (
+        {"Consumer surplus": "CS", "Producer surplus": "PS"}
+        if abbreviate_components else {name: name.lower() for name in colors}
+    )
+    regions = base.PAPER_REGION_ORDER
+    values_to_show = observations[value_column].to_numpy(float)
+    if symmetric_axis:
+        limit = max(5.0, 5.0 * np.ceil(np.abs(values_to_show).max() / 5.0))
+        axis_limits = (-limit, limit)
+    else:
+        axis_limits = (
+            50.0 * np.floor(values_to_show.min() / 50.0),
+            50.0 * np.ceil(values_to_show.max() / 50.0),
+        )
+    with plt.rc_context({
+        "font.family": "serif",
+        "font.serif": ["Times New Roman", "Times", "DejaVu Serif"],
+        "axes.unicode_minus": False,
+    }):
+        fig, ax = plt.subplots(figsize=(6.0, 4.25) if compact else (8.2, 5.6))
+        positions = np.arange(1, len(regions) + 1, dtype=float)
+        for component in colors:
+            color = colors[component]
+            values = [
+                observations[
+                    (observations["component"] == component)
+                    & (observations["region"] == region)
+                ][value_column].to_numpy(float)
+                for region in regions
+            ]
+            if any(len(group) != 27 for group in values):
+                raise ValueError("Welfare boxplot requires 27 observations per group")
+            ax.boxplot(
+                values, positions=positions, vert=False, widths=0.36,
+                whis=(0, 100), showfliers=False, patch_artist=True,
+                boxprops={"facecolor": color, "edgecolor": color,
+                          "alpha": 0.52, "linewidth": 1.2},
+                whiskerprops={"color": color, "linewidth": 1.25,
+                              "alpha": 0.82},
+                capprops={"color": color, "linewidth": 1.25,
+                          "alpha": 0.82},
+                medianprops={"color": "#202020", "linewidth": 2.1},
+            )
+        ax.axvline(0, color="#333333", linewidth=1.15, zorder=1)
+        region_names = (
+            {"ch": "China", "eu": "EU", "us": "US", "apac": "APAC",
+             "af": "Africa", "row": "ROW"}
+            if compact else base.PAPER_REGION_NAMES
+        )
+        ax.set_yticks(positions, [region_names[r] for r in regions])
+        ax.invert_yaxis()
+        ax.set_xlim(*axis_limits)
+        ax.grid(axis="x", linestyle=":", color="#D5D5D5")
+        ax.set_axisbelow(True)
+        ax.tick_params(axis="both", labelsize=10.5 if compact else 11.5)
+        ax.spines[["top", "right", "left"]].set_visible(False)
+        ax.tick_params(axis="y", length=0)
+        ax.set_xlabel(xlabel, fontsize=11.5 if compact else 13, labelpad=5)
+        fig.legend(
+            handles=[
+                Patch(facecolor=colors[component], edgecolor=colors[component],
+                      alpha=0.52, label=(
+                          f"{legend_prefix} {component_labels[component]} "
+                          "difference to global welfare maximization"
+                      ))
+                for component in colors
+            ],
+            loc="lower center",
+            bbox_to_anchor=(
+                0.5, 0.04 if compact else (0.05 if abbreviate_components else 0.06)
+            ),
+            ncol=1, frameon=True, fontsize=11,
+            handlelength=1.7, labelspacing=0.55, borderpad=0.65,
+        )
+        fig.subplots_adjust(
+            left=0.19 if compact else 0.23, right=0.98, top=0.97,
+            bottom=0.32 if compact else (0.28 if abbreviate_components else 0.26),
+        )
+        base.save_figure(fig, output_dir, stem)
+
+
 def plot_regional_bands(
     frame: pd.DataFrame,
     value_column: str,
@@ -330,8 +831,25 @@ def plot_regional_bands(
     band_color: str,
     output_dir: Path,
     stem: str,
+    display_candidates: set[str] | None = None,
+    shared_ymax: float | None = None,
+    show_individual_outcomes: bool = True,
+    planner_prices: pd.DataFrame | None = None,
+    stacked_legend: bool = False,
 ) -> None:
-    """Paper band plot with extra horizontal room for wide clean-price axes."""
+    """Paper band plot over a specified common set of search branches."""
+    plot_frame = frame
+    if display_candidates is not None:
+        plot_frame = frame[frame["candidate"].isin(display_candidates)]
+        if set(plot_frame["candidate"]) != display_candidates:
+            raise ValueError("Band plot is missing one or more selected branches")
+    if shared_ymax is not None:
+        values_to_show = [plot_frame[value_column].max()]
+        if planner_prices is not None:
+            values_to_show.append(planner_prices["planner_price_usd_per_kw"].max())
+        if max(values_to_show) > shared_ymax:
+            raise ValueError("Shared y-axis would clip a retained observation")
+
     with plt.rc_context(
         {
             "font.family": "serif",
@@ -347,7 +865,7 @@ def plot_regional_bands(
             zip(axes.flat, base.PAPER_REGION_ORDER)
         ):
             data = [
-                frame[(frame["region"] == region) & (frame["year"] == year)][
+                plot_frame[(plot_frame["region"] == region) & (plot_frame["year"] == year)][
                     value_column
                 ].to_numpy()
                 for year in years
@@ -388,21 +906,39 @@ def plot_regional_bands(
                 linewidth=1.8,
                 marker="o",
                 markersize=4.5,
-                zorder=4,
+                zorder=6,
             )
-            for position, values in enumerate(data):
-                jitter = rng.uniform(-0.055, 0.055, size=len(values))
-                axis.scatter(
-                    np.full(len(values), x[position]) + jitter,
-                    values,
-                    s=10,
-                    color="#222222",
-                    alpha=0.45,
-                    linewidths=0,
-                    zorder=3,
+            if planner_prices is not None:
+                reference = (
+                    planner_prices[planner_prices["region"] == region]
+                    .set_index("year")
+                    .loc[list(years)]
                 )
+                axis.plot(
+                    x,
+                    reference["planner_price_usd_per_kw"].to_numpy(float),
+                    color="#2E6F40",
+                    linewidth=2.0,
+                    marker="s",
+                    markersize=4.5,
+                    zorder=5,
+                )
+            if show_individual_outcomes:
+                for position, values in enumerate(data):
+                    jitter = rng.uniform(-0.055, 0.055, size=len(values))
+                    axis.scatter(
+                        np.full(len(values), x[position]) + jitter,
+                        values,
+                        s=10,
+                        color="#222222",
+                        alpha=0.45,
+                        linewidths=0,
+                        zorder=3,
+                    )
             axis.set_title(base.PAPER_REGION_NAMES[region], fontsize=15)
             axis.set_xticks(x, [str(year) for year in years])
+            if shared_ymax is not None:
+                axis.set_ylim(0, shared_ymax)
             if index % 2 == 0:
                 axis.set_ylabel(ylabel, fontsize=15)
             axis.spines[["top", "right"]].set_visible(False)
@@ -424,23 +960,19 @@ def plot_regional_bands(
                 linewidth=1.8,
                 marker="o",
                 markersize=4.5,
-                label="Median",
+                label=(
+                    "Median strategic market clearing prices"
+                    if planner_prices is not None
+                    else "Median production capacity"
+                    if value_column == "capacity_gw"
+                    else "Median"
+                ),
             ),
             Patch(
                 facecolor=band_color,
                 alpha=0.38,
                 edgecolor="#C7C7C7",
                 label="10th–90th percentiles",
-            ),
-            Line2D(
-                [0],
-                [0],
-                color="#222222",
-                linestyle="none",
-                marker="o",
-                markersize=4.0,
-                alpha=0.45,
-                label="Individual equilibria",
             ),
             Patch(
                 facecolor=band_color,
@@ -449,25 +981,73 @@ def plot_regional_bands(
                 label="25th–75th percentiles",
             ),
         ]
-        figure.legend(
-            handles=legend_handles,
-            loc="lower center",
-            ncol=3,
-            fontsize=9.5,
-            frameon=True,
-            framealpha=0.9,
-            handlelength=1.4,
-            handletextpad=0.45,
-            columnspacing=0.9,
-            borderpad=0.45,
-            labelspacing=0.35,
-            bbox_to_anchor=(0.5, 0.065),
+        if show_individual_outcomes:
+            legend_handles.insert(
+                3,
+                Line2D(
+                    [0],
+                    [0],
+                    color="#222222",
+                    linestyle="none",
+                    marker="o",
+                    markersize=4.0,
+                    alpha=0.45,
+                    label="Individual equilibria",
+                ),
+            )
+        if planner_prices is not None or stacked_legend:
+            stacked_handles = [
+                legend_handles[0],
+                legend_handles[2],
+                legend_handles[3],
+                legend_handles[1],
+            ]
+            if planner_prices is not None:
+                stacked_handles.append(
+                    Line2D(
+                        [0], [0], color="#2E6F40", linewidth=2.0,
+                        marker="s", markersize=4.5,
+                        label="Global Welfare maximization",
+                    )
+                )
+            figure.legend(
+                handles=stacked_handles,
+                loc="lower center",
+                ncol=1,
+                bbox_to_anchor=(0.5, 0.02),
+                fontsize=14.5,
+                frameon=True,
+                framealpha=0.9,
+                handlelength=1.6,
+                handletextpad=0.5,
+                borderpad=0.55,
+                labelspacing=0.45,
+            )
+        else:
+            figure.legend(
+                handles=legend_handles,
+                loc="lower center",
+                ncol=3 if show_individual_outcomes else 2,
+                fontsize=9.5,
+                frameon=True,
+                framealpha=0.9,
+                handlelength=1.4,
+                handletextpad=0.45,
+                columnspacing=0.9,
+                borderpad=0.45,
+                labelspacing=0.35,
+                bbox_to_anchor=(0.5, 0.065),
+            )
+        legend_margin = (
+            0.30 if planner_prices is not None else
+            0.27 if stacked_legend else
+            0.20
         )
         figure.subplots_adjust(
             left=0.11,
             right=0.98,
             top=0.96,
-            bottom=0.20,
+            bottom=legend_margin,
             wspace=0.43,
             hspace=0.50,
         )
@@ -782,6 +1362,7 @@ def build_report(
     previous_metrics: pd.DataFrame,
     previous_capacity_rows: pd.DataFrame,
     trade_offer_rows: pd.DataFrame,
+    welfare_comparison: pd.DataFrame,
 ) -> str:
     count = len(candidate_metrics)
     cap = candidate_metrics["total_capacity_2040_gw"]
@@ -842,9 +1423,13 @@ def build_report(
     lines = [
         "# Clean-objective Stage 2 statistical analysis",
         "",
+        "Figures are stored in this folder; CSV tables are in [`csv/`](csv/).",
+        "",
         "## Scope and selection",
         "",
-        f"This analysis uses all **{count} accepted branch outcomes** from the 36-run clean-objective Stage 2 factorial. The objective retains the full market-price producer margin (no `-mu_offer` subtraction) and removes both economic-quadratic and algorithmic-proximal penalties. There were **{accepted} accepted**, **{no_pass} no-pass**, and **{failed} failed** branches.",
+        f"This analysis reports **{count} branch outcomes** from the 36-run clean-objective Stage 2 factorial. The objective retains the full market-price producer margin (no `-mu_offer` subtraction) and removes both economic-quadratic and algorithmic-proximal penalties. The run produced **{accepted} accepted**, **{no_pass} no-pass**, and **{failed} failed** branches.",
+        "",
+        "The accepted `ch-af-apac-eu-row-us/pf100_k100_a040` branch is excluded from reported economic results because its Europe 2035 clearing price reaches 641.45 USD/kW. Its source profile and acceptance audit remain in the run record; search-success diagnostics still count it as accepted. The exclusion is recorded in `results_selection.json` at the run root.",
         "",
         "Accepted branch outcomes are deterministic, selection-conditioned computational results. They are not independent observations and may represent nearby points in the same equilibrium basin. Consequently, percentiles, correlations, clusters, and matched contrasts are descriptive rather than inferential or causal.",
         "",
@@ -867,6 +1452,30 @@ def build_report(
         "| Dimension | Level | Accepted | Branches | Pass rate |",
         "|---|---|---:|---:|---:|",
     ]
+    welfare_table = [
+        "## Welfare components by region",
+        "",
+        "Discounted billion USD over 2025–2040. The strategic values are component-wise medians across the 27 reported equilibria. Producer surplus is shown before capacity costs, which enter welfare separately; terminal salvage is excluded.",
+        "",
+        "| Region | Planner CS | Median strategic CS | Planner PS | Median strategic PS |",
+        "|---|---:|---:|---:|---:|",
+    ]
+    def welfare_display(value: float) -> str:
+        return f"{0.0 if abs(value) < 0.05 else value:,.1f}"
+
+    welfare_index = welfare_comparison.set_index("region")
+    for region in base.PAPER_REGION_ORDER:
+        row = welfare_index.loc[region]
+        welfare_table.append(
+            f"| {row['region_label']} | {welfare_display(row['planner_cs_billion_usd_pv'])} | {welfare_display(row['median_strategic_cs_billion_usd_pv'])} | {welfare_display(row['planner_ps_billion_usd_pv'])} | {welfare_display(row['median_strategic_ps_billion_usd_pv'])} |"
+        )
+    welfare_table.extend([
+        "",
+        "The relative CS/PS boxplots use `100 × (strategic component − planner component) / planner regional welfare` for each branch and region, where planner regional welfare is CS + PS − capacity costs. Thus both components share one denominator; a positive value means the strategic outcome raises that component relative to global welfare maximization. Boxes span the 25th–75th percentiles, the dark mark is the median, and whiskers span all 27 reported outcomes.",
+        "",
+    ])
+    position = lines.index("## Comparison with the previous objective")
+    lines[position:position] = welfare_table
     display_rates = pass_rates[
         pass_rates["dimension"].isin(["price_factor", "update_order"])
     ]
@@ -904,6 +1513,12 @@ def build_report(
             "## Figure assessment",
             "",
             "- **Main-text candidates:** `equilibrium_bands_capacity_by_region`, `equilibrium_bands_prices_by_region`, and `capacity_price_pathway_equilibria`. These communicate the pathways and dispersion without implying a sampling distribution.",
+            "- **Band-figure selection:** `equilibrium_bands_capacity_by_region` and `equilibrium_bands_prices_by_region` show all 27 reported branches in every region and year; individual outcome dots are hidden and median markers remain. The price panels use a common 0–600 USD/kW scale.",
+            "- **Welfare components:** `welfare_cs_ps_distributions` shows the observed ranges and percentiles of planner-relative discounted consumer surplus and producer surplus less capacity costs across the same 27 branches. The adjacent welfare-level table reports producer surplus before capacity costs, consistent with the paper's CS + PS − CC accounting. Values are in discounted billion USD and exclude terminal salvage.",
+            "- **Relative welfare components:** `welfare_cs_ps_relative_distributions` divides each branch's CS and PS change by the corresponding region's total planner welfare. This common denominator makes the opposing changes comparable even where planner PS is close to zero. The plotted CS and PS are the paper's separate terms; capacity costs remain a separate welfare term.",
+            "- **Relative welfare boxplots:** `welfare_cs_ps_relative_boxplots` uses the same 27 branch-level percentages. Each box spans the 25th–75th percentiles, the dark line is the median, and whiskers span the full observed range; no outlier points are suppressed. Consumer and producer effects share one symmetric percentage axis.",
+            "- **Absolute welfare boxplots:** `welfare_cs_ps_absolute_boxplots` uses the same strategic-minus-planner CS and PS differences and branch set without percentage normalization. The x-axis is discounted billion USD over 2025–2040, and the box/whisker definitions match the relative version.",
+            "- **Planner reference:** The green Global Welfare maximization line uses `lam` from `outputs/llp_planner/llp_planner_results.xlsx` (`regions` sheet). The planner rerun uses the same corrected input workbook as Stage 2.",
             "- **Direct formulation comparison:** `comparison_previous_vs_clean` uses identical horizon metrics for the prior and clean accepted sets. It remains descriptive because acceptance changes with the objective.",
             "- **Regional mechanism comparison:** `comparison_regional_capacity_paths` makes the disappearance of systematic EU/US exit visible; `comparison_regional_price_paths` shows the associated price dispersion.",
             "- **Trade mechanism comparison:** `comparison_trade_flows_and_offers` compares total cross-border trade and the flow-weighted bilateral offer price on realized trade routes.",
@@ -932,6 +1547,7 @@ def main() -> None:
     parser.add_argument("--run-root", type=Path, default=DEFAULT_RUN_ROOT)
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--previous-analysis", type=Path, default=PREVIOUS_ANALYSIS)
+    parser.add_argument("--planner-results", type=Path, default=DEFAULT_PLANNER_RESULTS)
     args = parser.parse_args()
 
     run_root = args.run_root.resolve()
@@ -941,11 +1557,17 @@ def main() -> None:
         else run_root / "statistical_analysis"
     )
     previous_analysis = args.previous_analysis.resolve()
+    if not (previous_analysis / "candidate_metrics.csv").is_file() and args.previous_analysis == PREVIOUS_ANALYSIS:
+        previous_analysis = (
+            ROOT.parent / "_MOVE" / "new_equilibria" / "statistical_analysis_20260921"
+        ).resolve()
     if not (run_root / "manifest.json").is_file():
         raise FileNotFoundError(run_root / "manifest.json")
     if not (previous_analysis / "candidate_metrics.csv").is_file():
         raise FileNotFoundError(previous_analysis / "candidate_metrics.csv")
     output_dir.mkdir(parents=True, exist_ok=True)
+    csv_dir = output_dir / "csv"
+    csv_dir.mkdir(exist_ok=True)
     base.apply_plot_style()
 
     candidates, manifest = collect_candidates(run_root)
@@ -967,8 +1589,27 @@ def main() -> None:
         candidate_metrics, regional_metrics
     )
     raw_contrasts, contrast_summary = base.matched_contrasts(candidate_metrics)
-    branch_results = collect_branch_results(run_root, manifest)
-    initial_audits = collect_initial_audits(run_root)
+    # The search audit is an immutable run record. Reuse its exported diagnostics
+    # when the original no-pass branch audit files have been pruned.
+    branch_cache = csv_dir / "branch_results.csv"
+    initial_cache = csv_dir / "initial_audits.csv"
+    if branch_cache.is_file() and initial_cache.is_file():
+        branch_results = pd.read_csv(branch_cache)
+        initial_audits = pd.read_csv(initial_cache)
+        expected = {
+            (str(row["sequence"]), str(row["branch"]), str(row["status"]))
+            for row in manifest["results"]
+        }
+        observed = set(zip(
+            branch_results["sequence"].astype(str),
+            branch_results["branch"].astype(str),
+            branch_results["status"].astype(str),
+        ))
+        if observed != expected or len(branch_results) != len(manifest["results"]):
+            raise ValueError("Cached search diagnostics do not match the run manifest")
+    else:
+        branch_results = collect_branch_results(run_root, manifest)
+        initial_audits = collect_initial_audits(run_root)
     pass_rates = base.pass_rate_summary(branch_results)
     clusters, pca_loadings, silhouette, pca_info = base.pca_and_clusters(
         candidates, candidate_metrics
@@ -990,15 +1631,35 @@ def main() -> None:
         previous_analysis / "capacity_observations.csv"
     )
     previous_price_rows = pd.read_csv(previous_analysis / "price_observations.csv")
-    previous_candidates = collect_previous_candidates()
+    cached_trade = csv_dir / "trade_flow_offer_metrics.csv"
+    if cached_trade.is_file():
+        previous_trade = pd.read_csv(cached_trade)
+        previous_trade = previous_trade[
+            previous_trade["formulation"] == "previous_objective"
+        ].copy()
+        if set(previous_trade["candidate"]) != set(previous_metrics["candidate"]):
+            raise ValueError("Cached previous trade data do not match previous candidates")
+    else:
+        previous_trade = trade_offer_metrics(
+            collect_previous_candidates(), "previous_objective"
+        )
     trade_offer_rows = pd.concat(
         (
-            trade_offer_metrics(previous_candidates, "previous_objective"),
+            previous_trade,
             trade_offer_metrics(candidates, "clean_objective"),
         ),
         ignore_index=True,
     )
     comparison = comparison_table(candidate_metrics, previous_metrics)
+    welfare_rows, welfare_summary, welfare_levels, welfare_comparison = welfare_component_tables(
+        candidates, manifest, run_root, args.planner_results.resolve()
+    )
+    welfare_relative_rows, welfare_relative_summary = relative_welfare_component_tables(
+        welfare_levels, welfare_comparison
+    )
+    welfare_absolute_rows = absolute_welfare_difference_table(
+        welfare_levels, welfare_comparison
+    )
     tables = {
         "candidate_metrics.csv": candidate_metrics,
         "capacity_observations.csv": capacity_rows,
@@ -1020,9 +1681,16 @@ def main() -> None:
         "cluster_silhouette_scores.csv": silhouette,
         "comparison_previous_vs_clean.csv": comparison,
         "trade_flow_offer_metrics.csv": trade_offer_rows,
+        "welfare_component_observations.csv": welfare_rows,
+        "welfare_component_summary.csv": welfare_summary,
+        "welfare_level_observations.csv": welfare_levels,
+        "welfare_level_comparison.csv": welfare_comparison,
+        "welfare_relative_observations.csv": welfare_relative_rows,
+        "welfare_relative_summary.csv": welfare_relative_summary,
+        "welfare_absolute_difference_observations.csv": welfare_absolute_rows,
     }
     for filename, frame in tables.items():
-        frame.to_csv(output_dir / filename, index=False, float_format="%.10g")
+        frame.to_csv(csv_dir / filename, index=False, float_format="%.10g")
 
     count = len(candidates)
     base.draw_boxplots(
@@ -1045,6 +1713,7 @@ def main() -> None:
     )
     base.plot_capacity_by_region(capacity_rows, output_dir)
     base.plot_prices_by_region(price_rows, output_dir)
+    band_candidates = set(price_rows["candidate"])
     plot_regional_bands(
         capacity_rows,
         "capacity_gw",
@@ -1053,6 +1722,9 @@ def main() -> None:
         "#7570B3",
         output_dir,
         "equilibrium_bands_capacity_by_region",
+        display_candidates=band_candidates,
+        show_individual_outcomes=False,
+        stacked_legend=True,
     )
     plot_regional_bands(
         price_rows,
@@ -1062,6 +1734,34 @@ def main() -> None:
         "#A83232",
         output_dir,
         "equilibrium_bands_prices_by_region",
+        display_candidates=band_candidates,
+        shared_ymax=600.0,
+        show_individual_outcomes=False,
+        planner_prices=load_planner_prices(
+            args.planner_results.resolve(), base.MARKET_YEARS
+        ),
+    )
+    plot_welfare_component_distributions(welfare_summary, output_dir)
+    plot_relative_welfare_components(welfare_relative_summary, output_dir)
+    plot_welfare_difference_boxplots(
+        welfare_relative_rows, output_dir,
+        value_column="change_percent_of_planner_regional_welfare",
+        xlabel="[%]", legend_prefix="Relative",
+        stem="welfare_cs_ps_relative_boxplots", symmetric_axis=True,
+        abbreviate_components=True,
+    )
+    plot_welfare_difference_boxplots(
+        welfare_relative_rows, output_dir,
+        value_column="change_percent_of_planner_regional_welfare",
+        xlabel="[%]", legend_prefix="Relative",
+        stem="welfare_cs_ps_relative_boxplots_response", symmetric_axis=True,
+        abbreviate_components=True, compact=True,
+    )
+    plot_welfare_difference_boxplots(
+        welfare_absolute_rows, output_dir,
+        value_column="change_billion_usd_pv",
+        xlabel="[billion USD, discounted]", legend_prefix="Absolute",
+        stem="welfare_cs_ps_absolute_boxplots", symmetric_axis=False,
     )
     base.plot_capacity_price_scatter(candidate_metrics, associations, output_dir)
     base.plot_horizon_capacity_price_equilibria(candidate_metrics, output_dir)
@@ -1101,6 +1801,7 @@ def main() -> None:
         previous_metrics,
         previous_capacity_rows,
         trade_offer_rows,
+        welfare_comparison,
     )
     (output_dir / "README.md").write_text(report, encoding="utf-8")
     base.build_workbook_bundle(

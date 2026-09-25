@@ -277,6 +277,7 @@ def _draw_chord_panel(
     cap: pd.Series,
     flows_all: pd.DataFrame,
     direct_labels: bool = False,
+    min_share_of_exporter: float = MIN_SHARE_OF_EXPORTER,
 ) -> None:
     cap = cap.reindex(REGION_ORDER).fillna(0.0)
     left_exporters = [region for region in REGION_ORDER if float(cap.get(region, 0.0)) > MIN_CAPACITY]
@@ -304,7 +305,7 @@ def _draw_chord_panel(
         ),
         axis=1,
     )
-    keep = (flows_plot["imp"] == "unused") | (flows_plot["share_exp"] >= MIN_SHARE_OF_EXPORTER)
+    keep = (flows_plot["imp"] == "unused") | (flows_plot["share_exp"] >= min_share_of_exporter)
     flows_plot = flows_plot[keep].copy()
 
     recv = flows_plot.groupby("imp")["x"].sum().reindex(DEST_ORDER).fillna(0.0)

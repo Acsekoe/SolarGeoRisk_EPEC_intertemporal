@@ -1287,10 +1287,20 @@ def apply_player_fixings(
     #   with domestic route fixed to the exogenous schedule c_man_t to guarantee
     #   self-offer == manufacturing cost exactly.
     c_man_t_src = data.c_man_t or {}
+    fix_p_offer_to_cost = bool((data.settings or {}).get("fix_p_offer_to_c_man_t", False))
     for ex in data.regions:
         for im in data.regions:
             for tp in operating_times:
                 ub = float(data.p_offer_ub[(ex, im)])
+                if fix_p_offer_to_cost:
+                    cost = float(c_man_t_src.get((ex, tp), data.c_man[ex]))
+                    if cost > ub + 1e-9:
+                        raise ValueError(
+                            f"Manufacturing cost {cost:g} exceeds p_offer_ub[{ex},{im}]={ub:g}"
+                        )
+                    p_offer.lo[ex, im, tp] = cost
+                    p_offer.up[ex, im, tp] = cost
+                    continue
                 if ex == player:
                     if im == player:
                         # Domestic: eq_self_offer pins this to c_man_t_p[player,T].

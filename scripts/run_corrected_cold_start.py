@@ -87,7 +87,9 @@ def _matrix(data: Any, values: dict[tuple[str, str], float]) -> dict[str, dict[s
     }
 
 
-def _build_fresh_state(data: Any) -> dict[str, dict[tuple[str, ...], float]]:
+def _build_fresh_state(
+    data: Any, *, period_specific_cost_offers: bool = False
+) -> dict[str, dict[tuple[str, ...], float]]:
     times = list(data.times)
     operating_times = set(model_it._operating_times(data))
     move_times = model_it._move_times(times)
@@ -107,7 +109,11 @@ def _build_fresh_state(data: Any) -> dict[str, dict[tuple[str, ...], float]]:
         },
         "p_offer": {
             (exporter, importer, period): (
-                float(data.c_man[exporter]) if period in operating_times else 0.0
+                float(
+                    (data.c_man_t or {}).get((exporter, period), data.c_man[exporter])
+                    if period_specific_cost_offers
+                    else data.c_man[exporter]
+                ) if period in operating_times else 0.0
             )
             for exporter in data.regions
             for importer in data.regions
@@ -187,6 +193,10 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--order", default=",".join(DEFAULT_ORDER))
     parser.add_argument("--iters", type=int, default=30)
     parser.add_argument("--terminal-salvage-fraction", type=float, default=0.5)
+    parser.add_argument(
+        "--fix-offers-to-cost", action="store_true",
+        help="Fix every bilateral offer to exporter-period marginal manufacturing cost.",
+    )
     parser.add_argument("--log-path", type=Path)
     return parser.parse_args()
 
@@ -213,7 +223,9 @@ def main() -> int:
     data.settings["terminal_capacity_state_only"] = True
     if order != list(dict.fromkeys(order)) or set(order) != set(data.players):
         raise ValueError(f"Order must contain every player exactly once. Got {order}; players={data.players}")
-    initial_state = _build_fresh_state(data)
+    initial_state = _build_fresh_state(
+        data, period_specific_cost_offers=args.fix_offers_to_cost
+    )
 
     cfg = RunConfig(
         excel_path=str(input_path),
@@ -257,6 +269,7 @@ def main() -> int:
         terminal_capacity_state_only=True,
         decommission_penalty=0.0,
         fix_q_offer_to_kcap=True,
+        fix_p_offer_to_c_man_t=args.fix_offers_to_cost,
         force_mu_offer_zero=False,
         fix_a_bid_to_true_dem=True,
         discount_rate=0.02,
@@ -296,7 +309,11 @@ def main() -> int:
             "source": "constructed only from corrected input primitives; workbook initial_state sheets not read",
             "Q_offer": "existing capacity in every period",
             "dK_net": "zero in every capacity-move period",
-            "p_offer": "exporter 2025 manufacturing cost for every importer and period",
+            "p_offer": (
+                "exporter-period marginal manufacturing cost for every importer"
+                if args.fix_offers_to_cost
+                else "exporter 2025 manufacturing cost for every importer and period"
+            ),
             "a_bid": "calibrated true-demand intercept",
             "canonical_state_sha256": _state_sha256(initial_state),
         },

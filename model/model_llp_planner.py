@@ -21,6 +21,7 @@ No tariffs, no strategic behaviour, no upper-level logic.
 """
 from __future__ import annotations
 
+import argparse
 import os
 from dataclasses import dataclass
 from typing import Dict, List, Tuple
@@ -40,14 +41,10 @@ from gamspy import (
 )
 
 try:
-    from .model_main import (
-        ModelContext,
-        ModelData,
-        _terminal_salvage_discount_factor,
-    )
+    from .model_main import ModelContext, ModelData
     from .data_prep import load_data_from_excel
 except ImportError:
-    from model_main import ModelContext, ModelData, _terminal_salvage_discount_factor
+    from model_main import ModelContext, ModelData
     from data_prep import load_data_from_excel
 
 
@@ -254,7 +251,7 @@ def build_llp_planner_model(
     if salvage_fraction < 0.0:
         raise ValueError("terminal_salvage_fraction must be non-negative")
     terminal_salvage = (
-        gp.Number(_terminal_salvage_discount_factor(data))
+        gp.Number(beta_t_dict[times[-1]])
         * gp.Number(salvage_fraction)
         * Sum(R, c_inv_p[R] * Kcap[R, times[-1]])
     )
@@ -393,7 +390,7 @@ def extract_llp_state(ctx: ModelContext, data: ModelData) -> Dict[str, object]:
         for _, row in rec.iterrows():
             t = row["T_plan"] if "T_plan" in row.index else row["T"]
             w = float(beta_dict.get(t, 1.0)) * float(ytn_dict.get(t, 5.0))
-            mu_cap_dict[(row["exp"], t)] = -float(row["marginal"]) / w if w else 0.0
+            mu_cap_dict[(row["exp"], t)] = float(row["marginal"]) / w if w else 0.0
 
     obj_total = float(ctx.models["planner"].objective_value)
 
@@ -491,6 +488,11 @@ def validate_llp_solution(state: Dict[str, object], data: ModelData) -> List[str
             if lam_val < -1e-3:
                 msgs.append(f"[CHECK 4] negative lambda={lam_val:.4f} for {i},{t}")
 
+        for e in data.regions:
+            mu_cap_val = state["mu_cap"].get((e, t), 0.0)
+            if mu_cap_val < -1e-3:
+                msgs.append(f"[CHECK 5] negative capacity rent={mu_cap_val:.4f} for {e},{t}")
+
     return msgs
 
 
@@ -499,12 +501,23 @@ def validate_llp_solution(state: Dict[str, object], data: ModelData) -> List[str
 # =====================================================================
 if __name__ == "__main__":
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    input_path = os.path.normpath(
+    default_input_path = os.path.normpath(
         os.path.join(script_dir, "..", "inputs", "input_data_intertemporal.xlsx")
     )
+    parser = argparse.ArgumentParser(description="Solve the intertemporal LLP planner.")
+    parser.add_argument("--input", default=default_input_path, help="Input workbook path")
+    parser.add_argument("--output-dir", default=os.path.join(script_dir, "..", "outputs"),
+                        help="Directory for llp_planner_results.xlsx")
+    parser.add_argument("--terminal-salvage-fraction", type=float, default=None,
+                        help="Override terminal capacity salvage fraction")
+    args = parser.parse_args()
+    input_path = os.path.abspath(args.input)
 
     print("=== Loading data (params_region_new) ===")
     data = load_data_from_excel(input_path, params_region_sheet="params_region_new")
+    if args.terminal_salvage_fraction is not None:
+        data.settings = dict(data.settings or {})
+        data.settings["terminal_salvage_fraction"] = args.terminal_salvage_fraction
 
     print("=== Building LLP Planner ===")
     ctx = build_llp_planner_model(data)
@@ -524,7 +537,7 @@ if __name__ == "__main__":
         print("All checks passed.")
 
     import pandas as pd
-    out_dir = os.path.normpath(os.path.join(script_dir, "..", "outputs"))
+    out_dir = os.path.abspath(args.output_dir)
     os.makedirs(out_dir, exist_ok=True)
     out_path = os.path.join(out_dir, "llp_planner_results.xlsx")
 
@@ -539,6 +552,13 @@ if __name__ == "__main__":
     b_dem_t_dict   = dict(data.b_dem_t) if data.b_dem_t else {(r, t): float(data.b_dem.get(r, 1.0)) for r in data.regions for t in times_list}
     f_hold_dict    = dict(data.f_hold) if data.f_hold else {r: 0.0 for r in data.regions}
     c_inv_dict     = dict(data.c_inv)  if data.c_inv  else {r: 0.0 for r in data.regions}
+    salvage_fraction = float((data.settings or {}).get("terminal_salvage_fraction", 0.0))
+    salvage_discount = float(beta_d[times_list[-1]])
+    salvage_by_region = {
+        r: salvage_discount * salvage_fraction * c_inv_dict[r]
+        * state["Kcap"].get((r, times_list[-1]), 0.0)
+        for r in data.regions
+    }
 
     try:
         with pd.ExcelWriter(out_path) as writer:
@@ -602,10 +622,26 @@ if __name__ == "__main__":
                             })
             pd.DataFrame(rows_x).to_excel(writer, sheet_name="flows", index=False)
 
+            pd.DataFrame([
+                {
+                    "r": r,
+                    "t": times_list[-1],
+                    "Kcap": state["Kcap"].get((r, times_list[-1]), 0.0),
+                    "salvage_credit": salvage_by_region[r],
+                }
+                for r in data.regions
+            ]).to_excel(writer, sheet_name="terminal", index=False)
+
             # --- meta sheet ---
             pd.DataFrame([
                 {"key": "model",           "value": "llp_planner"},
-                {"key": "obj_total",       "value": round(state["obj_total"], 2)},
+                {"key": "obj_total",       "value": state["obj_total"]},
+                {"key": "operating_obj_total", "value": sum(row["obj"] for row in rows_rp)},
+                {"key": "terminal_salvage_total", "value": sum(salvage_by_region.values())},
+                {"key": "terminal_salvage_fraction", "value": salvage_fraction},
+                {"key": "solver",          "value": "ipopt"},
+                {"key": "solve_status",    "value": str(ctx.models["planner"].solve_status)},
+                {"key": "model_status",    "value": str(ctx.models["planner"].status)},
                 {"key": "plan_times",      "value": str(plan_times)},
                 {"key": "excel_path",      "value": input_path},
                 {"key": "params_sheet",    "value": "params_region_new"},

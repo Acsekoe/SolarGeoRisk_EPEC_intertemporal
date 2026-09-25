@@ -67,6 +67,17 @@ def solve_nested_market(
     regions = list(data.regions)
     times = list(data.times or [])
     operating_times = mm._operating_times(data)
+    if bool((data.settings or {}).get("fix_p_offer_to_c_man_t", False)):
+        for exporter in regions:
+            for importer in regions:
+                for period in operating_times:
+                    cost = float((data.c_man_t or {}).get((exporter, period), data.c_man[exporter]))
+                    offer = float(candidate["p_offer"][(exporter, importer, period)])
+                    if abs(offer - cost) > 1e-7:
+                        raise ValueError(
+                            f"Fixed-cost offer violated at {exporter}/{importer}/{period}: "
+                            f"{offer:g} != {cost:g}"
+                        )
     routes = [(exporter, importer) for exporter in regions for importer in regions]
     n_flow = len(routes)
     n_dem = len(regions)
@@ -251,7 +262,8 @@ def nested_best_response(
     operating_times = mm._operating_times(data)
     move_times = mm._move_times(times)
     importers = [importer for importer in data.regions if importer != player]
-    price_keys = [
+    fixed_cost_offers = bool((data.settings or {}).get("fix_p_offer_to_c_man_t", False))
+    price_keys = [] if fixed_cost_offers else [
         (player, importer, tp)
         for importer in importers
         for tp in operating_times

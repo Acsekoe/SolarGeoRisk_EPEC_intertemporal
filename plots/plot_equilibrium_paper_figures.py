@@ -48,6 +48,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 ROOT_DIR = SCRIPT_DIR.parent
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
+from scripts.stage2_results_selection import excluded_candidate_ids
 DEFAULT_PACKAGE_DIR = ROOT_DIR / "outputs" / "15_equilibria"
 DEFAULT_PLOTS_DIR = DEFAULT_PACKAGE_DIR / "plots"
 DEFAULT_PLANNER_PATH = DEFAULT_PACKAGE_DIR / "planner_benchmark_corrected.xlsx"
@@ -199,7 +200,13 @@ def load_json(path: Path) -> dict[str, Any]:
 
 def resolve_recorded_path(path_text: str) -> Path:
     path = Path(str(path_text).replace("\\", "/"))
-    return path.resolve() if path.is_absolute() else (ROOT_DIR / path).resolve()
+    if path.is_absolute():
+        return path.resolve()
+    for root in (ROOT_DIR, ROOT_DIR.parent):
+        candidate = (root / path).resolve()
+        if candidate.exists():
+            return candidate
+    return (ROOT_DIR / path).resolve()
 
 
 def load_candidates(
@@ -1235,6 +1242,15 @@ def main() -> None:
     planner_regions, planner_flows = load_planner(planner_path)
     planner_components = planner_welfare_components(planner_regions, planner_flows, data)
     candidates = load_candidates(package_dir, workflow_manifest)
+    selection_root = args.workflow_manifest.resolve().parent if args.workflow_manifest else package_dir
+    excluded = excluded_candidate_ids(selection_root)
+    loaded_ids = {f"{candidate.sequence}/{candidate.branch}" for candidate in candidates}
+    if not excluded <= loaded_ids:
+        raise ValueError(f"Reporting exclusions are not loaded candidates: {excluded - loaded_ids}")
+    candidates = [
+        candidate for candidate in candidates
+        if f"{candidate.sequence}/{candidate.branch}" not in excluded
+    ]
     plots_dir.mkdir(parents=True, exist_ok=True)
 
     candidate_outputs = [

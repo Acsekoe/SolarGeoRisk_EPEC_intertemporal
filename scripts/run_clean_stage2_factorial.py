@@ -97,7 +97,7 @@ DEFAULT_PRICE_FACTORS = (0.8, 1.0, 1.2)
 DEFAULT_CAPACITY_WEIGHTS = (0.5, 1.0)
 DEFAULT_ALPHAS = (0.3, 0.4)
 
-_ANCHOR_CACHE: dict[tuple[str, str, str, float], tuple[Any, dict[str, dict], dict[str, Any]]] = {}
+_ANCHOR_CACHE: dict[tuple[Any, ...], tuple[Any, dict[str, dict], dict[str, Any]]] = {}
 
 
 def now() -> str:
@@ -151,21 +151,33 @@ def branch_specification(
     price_factor: float,
     capacity_weight: float,
     alpha: float,
+    *,
+    fix_offers_to_cost: bool = False,
 ) -> dict[str, Any]:
+    offer_description = (
+        "bilateral offers fixed at exporter-period manufacturing cost"
+        if fix_offers_to_cost else
+        f"bilateral export offers initialized at {price_factor:.2f} times period-specific manufacturing cost"
+    )
     return {
         "description": (
-            "retained Stage-1 endpoint; bilateral export offers initialized at "
-            f"{price_factor:.2f} times period-specific manufacturing cost; "
+            f"retained Stage-1 endpoint; {offer_description}; "
             f"Stage-1 net capacity changes scaled by {capacity_weight:.2f}; "
             f"fixed all-player Gauss--Seidel damping {alpha:.2f}"
         ),
-        "kind": "clean_objective_stage2_price_capacity_factorial",
+        "kind": (
+            "clean_objective_stage2_capacity_only_factorial"
+            if fix_offers_to_cost else "clean_objective_stage2_price_capacity_factorial"
+        ),
+        "fix_offers_to_cost": fix_offers_to_cost,
         "price_offer_factor_to_manufacturing_cost": price_factor,
         "capacity_change_path_weight": capacity_weight,
         "capacity_reference_path": "retained Stage-1 endpoint",
         "capacity_zero_weight_endpoint": "observed initial capacity with zero net changes",
         "domestic_offer_initialization": "period-specific manufacturing cost",
         "bilateral_export_offer_initialization": (
+            "fixed at exporter-period manufacturing cost"
+            if fix_offers_to_cost else
             "price factor times period-specific manufacturing cost, clipped to model bounds"
         ),
         "alpha": alpha,
@@ -201,7 +213,8 @@ def build_tasks(
                             "capacity_weight": capacity_weight,
                             "alpha": alpha,
                             "branch_specification": branch_specification(
-                                price_factor, capacity_weight, alpha
+                                price_factor, capacity_weight, alpha,
+                                fix_offers_to_cost=bool(common.get("fix_offers_to_cost", False)),
                             ),
                         }
                     )
@@ -212,7 +225,9 @@ def build_tasks(
     return tasks
 
 
-def clean_configuration(input_path: Path, terminal_salvage_fraction: float) -> run_gs.RunConfig:
+def clean_configuration(
+    input_path: Path, terminal_salvage_fraction: float, *, fix_offers_to_cost: bool = False
+) -> run_gs.RunConfig:
     return run_gs._effective_run_config(
         run_gs.RunConfig(
             excel_path=str(input_path.resolve()),
@@ -229,6 +244,7 @@ def clean_configuration(input_path: Path, terminal_salvage_fraction: float) -> r
             terminal_capacity_state_only=True,
             decommission_penalty=0.0,
             fix_q_offer_to_kcap=True,
+            fix_p_offer_to_c_man_t=fix_offers_to_cost,
             force_mu_offer_zero=False,
             fix_a_bid_to_true_dem=True,
             discount_rate=0.02,
@@ -266,20 +282,27 @@ def load_stage1_anchor(
     stage1_root: Path,
     sequence: str,
     terminal_salvage_fraction: float,
+    *,
+    specification: dict[str, Any] | None = None,
+    fix_offers_to_cost: bool = False,
 ) -> tuple[Any, dict[str, dict], dict[str, Any]]:
     cache_key = (
         str(input_path.resolve()),
         str(stage1_root.resolve()),
         sequence,
         terminal_salvage_fraction,
+        fix_offers_to_cost,
+        json.dumps(specification, sort_keys=True) if specification is not None else None,
     )
     cached = _ANCHOR_CACHE.get(cache_key)
     if cached is not None:
         data, source, metadata = cached
         return data, clone_state(source), dict(metadata)
 
-    specification = STAGE1_PROFILES[sequence]
-    cfg = clean_configuration(input_path, terminal_salvage_fraction)
+    specification = specification or STAGE1_PROFILES[sequence]
+    cfg = clean_configuration(
+        input_path, terminal_salvage_fraction, fix_offers_to_cost=fix_offers_to_cost
+    )
     # Keep subprocess output limited to labelled Stage-2 progress lines.  The
     # loader's calibration diagnostics remain reproducible in the input hash.
     with contextlib.redirect_stdout(io.StringIO()):
@@ -289,7 +312,9 @@ def load_stage1_anchor(
         run_gs._apply_data_overrides(data, cfg)
     assert_clean_objective(data)
 
-    state = _build_fresh_state(data)
+    state = _build_fresh_state(
+        data, period_specific_cost_offers=fix_offers_to_cost
+    )
     replay_records: list[dict[str, Any]] = []
     maximum_replay_error = 0.0
     for filename, through_iteration in specification["replay"]:
@@ -374,15 +399,16 @@ def update_player(
             (1.0 - alpha) * float(state["dK_net"][key])
             + alpha * float(response["dK_net"][key])
         )
-    for importer in data.regions:
-        if importer == player:
-            continue
-        for period in mm._operating_times(data):
-            key = (player, importer, period)
-            state["p_offer"][key] = (
-                (1.0 - alpha) * float(state["p_offer"][key])
-                + alpha * float(response["p_offer"][key])
-            )
+    if not bool((data.settings or {}).get("fix_p_offer_to_c_man_t", False)):
+        for importer in data.regions:
+            if importer == player:
+                continue
+            for period in mm._operating_times(data):
+                key = (player, importer, period)
+                state["p_offer"][key] = (
+                    (1.0 - alpha) * float(state["p_offer"][key])
+                    + alpha * float(response["p_offer"][key])
+                )
     _sync_quantity(data, state)
 
 
@@ -555,9 +581,11 @@ def run_branch(task: dict[str, Any]) -> dict[str, Any]:
             Path(task["stage1_root"]),
             sequence,
             float(task["terminal_salvage_fraction"]),
+            specification=task.get("stage1_spec"),
+            fix_offers_to_cost=bool(task.get("fix_offers_to_cost", False)),
         )
         assert_clean_objective(data)
-        order = list(STAGE1_PROFILES[sequence]["order"])
+        order = list((task.get("stage1_spec") or STAGE1_PROFILES[sequence])["order"])
         initialization_path = branch_root / "initialization.json"
         if initialization_path.exists():
             initial_state = load_saved_state(initialization_path, data, source)
@@ -962,6 +990,8 @@ def validate_sources(
     terminal_salvage_fraction: float,
     price_factor: float,
     capacity_weight: float,
+    stage1_profiles: dict[str, dict[str, Any]] | None = None,
+    fix_offers_to_cost: bool = False,
 ) -> None:
     print(
         f"[VALIDATE] input={relative(input_path)} sha256={sha256(input_path)}",
@@ -973,6 +1003,8 @@ def validate_sources(
             stage1_root,
             sequence,
             terminal_salvage_fraction,
+            specification=(stage1_profiles or STAGE1_PROFILES)[sequence],
+            fix_offers_to_cost=fix_offers_to_cost,
         )
         initial = make_factorial_initial_state(
             data,
@@ -990,7 +1022,7 @@ def validate_sources(
             f"{data.settings['c_quad_a']} "
             f"c_pen={data.settings['c_pen_q']}/{data.settings['c_pen_p']}/"
             f"{data.settings['c_pen_a']}/{data.settings['c_pen_dk']} "
-            f"market_stationarity={float(market_diagnostics['positive_flow_stationarity_max']):.3g}",
+            f"market_stationarity={float(market_diagnostics['max_positive_flow_stationarity']):.3g}",
             flush=True,
         )
 
@@ -1023,10 +1055,16 @@ def main() -> None:
     parser.add_argument("--input", type=Path, default=DEFAULT_INPUT)
     parser.add_argument("--stage1-root", type=Path, default=DEFAULT_STAGE1_ROOT)
     parser.add_argument(
+        "--stage1-specs", type=Path,
+        help="JSON mapping of sequence names to Stage-1 replay specifications.",
+    )
+    parser.add_argument(
+        "--fix-offers-to-cost", action="store_true",
+        help="Capacity-only game with every bilateral offer fixed at exporter-period cost.",
+    )
+    parser.add_argument(
         "--sequences",
         nargs="+",
-        choices=list(STAGE1_PROFILES),
-        default=list(STAGE1_PROFILES),
     )
     parser.add_argument(
         "--price-factors", nargs="+", type=float, default=list(DEFAULT_PRICE_FACTORS)
@@ -1067,6 +1105,18 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    stage1_profiles = (
+        json.loads(args.stage1_specs.read_text(encoding="utf-8"))
+        if args.stage1_specs else STAGE1_PROFILES
+    )
+    sequences = list(args.sequences or stage1_profiles)
+    unknown = set(sequences) - set(stage1_profiles)
+    if unknown:
+        raise ValueError(f"Unknown Stage-1 sequences: {sorted(unknown)}")
+    price_factors = [1.0] if args.fix_offers_to_cost else list(args.price_factors)
+    if args.fix_offers_to_cost and args.price_factors != list(DEFAULT_PRICE_FACTORS) and args.price_factors != [1.0]:
+        raise ValueError("Fixed cost offers require --price-factors 1.0")
+
     if args.workers < 1 or args.max_sweeps < 1 or args.maxiter < 1:
         raise ValueError("workers, max-sweeps, and maxiter must be positive")
     if not 0.0 <= args.relative_gain_tolerance < 1.0:
@@ -1077,7 +1127,7 @@ def main() -> None:
         raise ValueError("capacity-weights must lie in [0, 1]")
     if any(not 0.0 < value <= 1.0 for value in args.alphas):
         raise ValueError("alphas must lie in (0, 1]")
-    if any(value < 0.0 for value in args.price_factors):
+    if any(value < 0.0 for value in price_factors):
         raise ValueError("price-factors must be nonnegative")
 
     input_path = args.input.resolve()
@@ -1107,14 +1157,17 @@ def main() -> None:
         "terminal_salvage_fraction": args.terminal_salvage_fraction,
         "relative_gain_tolerance": args.relative_gain_tolerance,
         "progress": args.progress,
+        "fix_offers_to_cost": args.fix_offers_to_cost,
     }
     tasks = build_tasks(
-        sequences=list(args.sequences),
-        price_factors=list(args.price_factors),
+        sequences=sequences,
+        price_factors=price_factors,
         capacity_weights=list(args.capacity_weights),
         alphas=list(args.alphas),
         common=common,
     )
+    for task in tasks:
+        task["stage1_spec"] = stage1_profiles[task["sequence"]]
     if args.plan_only:
         print(
             f"[PLAN] {len(tasks)} runs; workers={min(args.workers, len(tasks))}; "
@@ -1130,10 +1183,12 @@ def main() -> None:
         validate_sources(
             input_path=input_path,
             stage1_root=stage1_root,
-            sequences=list(args.sequences),
+            sequences=sequences,
             terminal_salvage_fraction=args.terminal_salvage_fraction,
-            price_factor=float(args.price_factors[0]),
+            price_factor=float(price_factors[0]),
             capacity_weight=float(args.capacity_weights[0]),
+            stage1_profiles=stage1_profiles,
+            fix_offers_to_cost=args.fix_offers_to_cost,
         )
         print(f"[VALIDATE] OK: {len(tasks)} planned Stage-2 runs", flush=True)
         return
@@ -1170,8 +1225,9 @@ def main() -> None:
         "move_cap": None,
         "gain_filter": None,
         "players_frozen": False,
-        "sequences": list(args.sequences),
-        "price_factors": list(args.price_factors),
+        "sequences": sequences,
+        "price_factors": price_factors,
+        "fix_offers_to_cost": args.fix_offers_to_cost,
         "capacity_weights": list(args.capacity_weights),
         "alphas": list(args.alphas),
         "max_sweeps": args.max_sweeps,
@@ -1180,7 +1236,7 @@ def main() -> None:
         "input": relative(input_path),
         "input_sha256": input_sha256,
         "stage1_root": relative(stage1_root),
-        "stage1_profiles": STAGE1_PROFILES,
+        "stage1_profiles": stage1_profiles,
     }
     manifest_path = output_root / "manifest.json"
     if args.resume:
