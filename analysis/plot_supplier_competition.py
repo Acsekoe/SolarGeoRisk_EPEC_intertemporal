@@ -65,9 +65,9 @@ def plot_supplier_shares(routes: pd.DataFrame) -> None:
     grouped.to_csv(DATA_CSV / "all_supplier_market_shares.csv", index=False)
     assert np.allclose(grouped.groupby(["importer", "year"]).mean_share.sum(), 1, atol=1e-7)
 
-    fig, axes = plt.subplots(2, 2, figsize=(10.8, 7.4), sharex=True, sharey=True)
+    fig, axes = plt.subplots(3, 2, figsize=(10.8, 10.2), sharex=True, sharey=True)
     x = np.arange(len(YEARS), dtype=float)
-    for ax, importer in zip(axes.flat, MARKETS):
+    for ax, importer in zip(axes.flat, REGIONS):
         bottom = np.zeros(len(YEARS))
         for exporter in REGIONS:
             values = np.array([
@@ -91,10 +91,10 @@ def plot_supplier_shares(routes: pd.DataFrame) -> None:
     fig.legend(handles=region_legend(), ncol=6, loc="lower center",
                bbox_to_anchor=(0.5, 0.015), frameon=True, framealpha=0.95,
                fontsize=12, columnspacing=1.2, handlelength=1.35)
-    fig.text(0.5, 0.102, "Arithmetic mean across the 27 reported profiles; every supplier is shown separately.",
+    fig.text(0.5, 0.079, "Arithmetic mean across the 27 reported profiles; every supplier is shown separately.",
              ha="center", fontsize=10.5, color="#444444")
-    fig.subplots_adjust(left=0.10, right=0.985, top=0.95, bottom=0.17,
-                        wspace=0.23, hspace=0.33)
+    fig.subplots_adjust(left=0.10, right=0.985, top=0.96, bottom=0.13,
+                        wspace=0.23, hspace=0.38)
     save(fig, "supplier_shares_all_regions")
 
 

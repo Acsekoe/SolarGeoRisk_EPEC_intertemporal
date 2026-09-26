@@ -1,4 +1,4 @@
-"""Regional capacity and price paths: three fixed-cost profiles versus 27 strategic medians."""
+"""Regional capacity and price paths: three capacity-only equilibria versus 27 strategic medians and the LLP benchmark."""
 
 from __future__ import annotations
 
@@ -25,6 +25,8 @@ REGIONS = (
     ("row", "Rest of World"),
 )
 YEARS = (2025, 2030, 2035, 2040)
+PLANNER_PATH = ROOT / "outputs" / "llp_planner" / "llp_planner_results.xlsx"
+CAPACITY_COLOR = "#B64550"
 
 
 def accepted_branches(root: Path) -> set[str]:
@@ -33,7 +35,7 @@ def accepted_branches(root: Path) -> set[str]:
     return set(accepted["sequence"] + "/" + accepted["branch"])
 
 
-def validate_and_load() -> tuple[pd.DataFrame, pd.DataFrame]:
+def validate_and_load() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     strategic_manifest = json.loads((STRATEGIC_ROOT / "manifest.json").read_text())
     capacity_manifest = json.loads((CAPACITY_ROOT / "stage2" / "manifest.json").read_text())
     strategic_protocol = strategic_manifest["protocol"]
@@ -83,15 +85,34 @@ def validate_and_load() -> tuple[pd.DataFrame, pd.DataFrame]:
             actual = set(zip(group["region"], group["year"]))
             if actual != expected:
                 raise ValueError(f"Missing or duplicate region-year in {candidate}")
-    return strategic, fixed
+    planner = pd.read_excel(
+        PLANNER_PATH, sheet_name="regions", usecols=["r", "t", "Kcap", "lam"]
+    ).rename(
+        columns={
+            "r": "region",
+            "t": "year",
+            "Kcap": "capacity_gw",
+            "lam": "price_usd_per_kw",
+        }
+    )
+    planner["region"] = planner["region"].astype(str).str.lower().str.strip()
+    planner["year"] = pd.to_numeric(planner["year"], errors="raise").astype(int)
+    if planner.duplicated(["region", "year"]).any():
+        raise ValueError("Duplicate LLP benchmark region-year records")
+    planner = planner.set_index(["region", "year"]).reindex(
+        pd.MultiIndex.from_tuples(sorted(expected), names=["region", "year"])
+    )
+    if not np.isfinite(planner.to_numpy(dtype=float)).all():
+        raise ValueError("Missing or non-finite LLP benchmark values")
+    return strategic, fixed, planner.reset_index()
 
 
 def draw(
     strategic: pd.DataFrame,
     fixed: pd.DataFrame,
+    planner: pd.DataFrame,
     column: str,
     ylabel: str,
-    color: str,
     stem: str,
     output_dir: Path,
 ) -> None:
@@ -115,25 +136,39 @@ def draw(
                 ],
                 dtype=float,
             )
-            fixed_values = [
-                fixed.loc[(fixed["region"] == region) & (fixed["year"] == year), column]
+            fixed_matrix = (
+                fixed.loc[fixed["region"] == region]
+                .pivot(index="candidate", columns="year", values=column)
+                .reindex(columns=YEARS)
+                .sort_index()
                 .to_numpy(dtype=float)
-                for year in YEARS
-            ]
-            lower = np.array([values.min() for values in fixed_values])
-            upper = np.array([values.max() for values in fixed_values])
-            middle = np.array([np.median(values) for values in fixed_values])
-            axis.fill_between(x, lower, upper, color=color, alpha=0.20, linewidth=0)
-            for boundary in (lower, upper):
-                axis.plot(x, boundary, color="#C7C7C7", linewidth=0.65)
+            )
+            lower = fixed_matrix.min(axis=0)
+            upper = fixed_matrix.max(axis=0)
+            axis.fill_between(
+                x, lower, upper, color=CAPACITY_COLOR, alpha=0.15, linewidth=0,
+                zorder=2,
+            )
+            for values in fixed_matrix:
+                axis.plot(
+                    x, values, color=CAPACITY_COLOR,
+                    linewidth=1.35, alpha=0.9, zorder=4,
+                )
             axis.plot(
-                x, middle, color="#222222", linewidth=1.8,
+                x, strategic_values, color="#222222", linewidth=1.8,
                 marker="o", markersize=4.5, zorder=6,
             )
-            axis.plot(
-                x, strategic_values, color="#2E6F40", linewidth=2.0,
-                marker="s", markersize=4.5, zorder=5,
-            )
+            if column == "price_usd_per_kw":
+                benchmark_values = (
+                    planner.loc[planner["region"] == region]
+                    .set_index("year")
+                    .loc[list(YEARS), column]
+                    .to_numpy(dtype=float)
+                )
+                axis.plot(
+                    x, benchmark_values, color="#2E6F40", linewidth=2.0,
+                    marker="s", markersize=4.5, zorder=5,
+                )
             axis.set_title(name, fontsize=15)
             axis.set_xticks(x, [str(year) for year in YEARS])
             if column == "price_usd_per_kw":
@@ -146,13 +181,18 @@ def draw(
             axis.tick_params(axis="both", labelsize=12.5)
 
         handles = [
-            Patch(facecolor=color, alpha=0.20, edgecolor="#C7C7C7",
-                  label="Capacity-only range (3 profiles)"),
+            Patch(facecolor=CAPACITY_COLOR, alpha=0.15, edgecolor="none",
+                  label="Capacity-only observed range"),
+            Line2D([0], [0], color=CAPACITY_COLOR, linewidth=1.35,
+                   label="Three capacity-only equilibria"),
             Line2D([0], [0], color="#222222", marker="o", markersize=4.5,
-                   linewidth=1.8, label="Capacity-only median"),
-            Line2D([0], [0], color="#2E6F40", marker="s", markersize=4.5,
-                   linewidth=2.0, label="Strategic-offer median (27 profiles)"),
+                   linewidth=1.8, label="Median of 27 strategic equilibria"),
         ]
+        if column == "price_usd_per_kw":
+            handles.append(
+                Line2D([0], [0], color="#2E6F40", marker="s", markersize=4.5,
+                       linewidth=2.0, label="LLP benchmark")
+            )
         fig.legend(
             handles=handles, loc="lower center", ncol=1,
             bbox_to_anchor=(0.5, 0.02), fontsize=14.5,
@@ -161,7 +201,7 @@ def draw(
         )
         fig.subplots_adjust(
             left=0.11, right=0.98, top=0.96,
-            bottom=0.22 if column == "price_usd_per_kw" else 0.20,
+            bottom=0.24,
             wspace=0.43, hspace=0.50,
         )
         for extension in ("png", "pdf"):
@@ -178,13 +218,13 @@ def main() -> None:
     args = parser.parse_args()
     output_dir = args.output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
-    strategic, fixed = validate_and_load()
+    strategic, fixed, planner = validate_and_load()
     draw(
-        strategic, fixed, "capacity_gw", "Capacity [GW]", "#7570B3",
+        strategic, fixed, planner, "capacity_gw", "Capacity [GW]",
         "capacity_only_vs_strategic_capacity_bands", output_dir,
     )
     draw(
-        strategic, fixed, "price_usd_per_kw", "Price [$/kW]", "#A83232",
+        strategic, fixed, planner, "price_usd_per_kw", "Price [$/kW]",
         "capacity_only_vs_strategic_price_bands", output_dir,
     )
     print(output_dir)
