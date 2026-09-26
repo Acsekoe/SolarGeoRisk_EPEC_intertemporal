@@ -1163,8 +1163,11 @@ def add_horizon_capacity_price_indicators(
 
 
 def plot_horizon_capacity_price_equilibria(
-    candidate_metrics: pd.DataFrame, output_dir: Path
+    candidate_metrics: pd.DataFrame,
+    output_dir: Path,
+    highlighted: dict[str, tuple[str, tuple[float, float]]] | None = None,
 ) -> None:
+    """``highlighted`` maps candidate -> (label, label offset in points)."""
     x_column = "average_total_capacity_2025_2040_gw"
     y_column = "average_demand_weighted_price_2025_2040_usd_per_kw"
 
@@ -1177,16 +1180,48 @@ def plot_horizon_capacity_price_equilibria(
         }
     ):
         figure, axis = plt.subplots(figsize=(7.4, 4.8))
+        x = candidate_metrics[x_column].to_numpy(dtype=float)
+        y = candidate_metrics[y_column].to_numpy(dtype=float)
+        slope, intercept = np.polyfit(x, y, 1)
+        fit_grid = np.linspace(x.min(), x.max(), 100)
+        axis.plot(
+            fit_grid,
+            slope * fit_grid + intercept,
+            color="#343434",
+            linestyle="--",
+            linewidth=2.0,
+            label="OLS linear fit",
+            zorder=2,
+        )
+        highlighted = highlighted or {}
+        is_highlighted = candidate_metrics["candidate"].isin(highlighted).to_numpy()
         axis.scatter(
-            candidate_metrics[x_column],
-            candidate_metrics[y_column],
+            x[~is_highlighted],
+            y[~is_highlighted],
             s=62,
             marker="x",
             color="#A83232",
             linewidth=1.8,
-            label="Converged equilibria",
+            label="Accepted profiles",
             zorder=3,
         )
+        for candidate, (label, offset) in highlighted.items():
+            row = candidate_metrics.loc[candidate_metrics["candidate"] == candidate].iloc[0]
+            point = (row[x_column], row[y_column])
+            axis.scatter(
+                *point, s=62, marker="x", color="#2E7D32", linewidth=2.2, zorder=4
+            )
+            axis.annotate(
+                label,
+                point,
+                xytext=offset,
+                textcoords="offset points",
+                ha="center",
+                va="center",
+                fontsize=13,
+                color="#2E7D32",
+                zorder=5,
+            )
 
         axis.set_xlabel("Average total manufacturing capacity [GW]", fontsize=15)
         axis.set_ylabel("Demand-weighted price [$/kW]", fontsize=15)
@@ -1196,6 +1231,7 @@ def plot_horizon_capacity_price_equilibria(
         axis.legend(
             loc="lower center",
             bbox_to_anchor=(0.5, -0.34),
+            ncol=2,
             frameon=True,
             framealpha=0.9,
             fontsize=11.5,

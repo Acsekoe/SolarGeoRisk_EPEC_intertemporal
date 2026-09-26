@@ -23,6 +23,14 @@ PREVIOUS_ANALYSIS = (
     ROOT / "outputs" / "new_equilibria" / "statistical_analysis_20260921"
 )
 DEFAULT_PLANNER_RESULTS = ROOT / "outputs" / "llp_planner" / "llp_planner_results.xlsx"
+# Equilibria discussed in detail in the paper: low-capacity/high-price outlier,
+# highest-capacity profile, and the profile closest to the median outcome.
+# Values are (label, label offset in points).
+PAPER_HIGHLIGHTED_EQUILIBRIA = {
+    "eu-us-af-row-apac-ch/pf120_k050_a040": ("Eq 1", (26, 0)),
+    "ch-af-apac-eu-row-us/pf120_k100_a030": ("Eq 2", (-4, 16)),
+    "ch-af-apac-eu-row-us/pf080_k050_a040": ("Eq 3", (2, -16)),
+}
 
 from scripts import analyze_equilibrium_ranges as base
 from scripts.stage2_results_selection import excluded_candidate_ids
@@ -1764,7 +1772,9 @@ def main() -> None:
         stem="welfare_cs_ps_absolute_boxplots", symmetric_axis=False,
     )
     base.plot_capacity_price_scatter(candidate_metrics, associations, output_dir)
-    base.plot_horizon_capacity_price_equilibria(candidate_metrics, output_dir)
+    base.plot_horizon_capacity_price_equilibria(
+        candidate_metrics, output_dir, highlighted=PAPER_HIGHLIGHTED_EQUILIBRIA
+    )
     base.plot_pass_heatmap(branch_results, output_dir)
     plot_clean_search_diagnostics(branch_results, output_dir)
     base.plot_matched_contrasts(raw_contrasts, output_dir)
