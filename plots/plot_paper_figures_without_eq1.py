@@ -30,6 +30,8 @@ CSV_DIR = (
     / "csv"
 )
 PAPER_PLOTS = ROOT / "outputs" / "paper_plots"
+# Copy inside the Overleaf repository so the paper compiles there.
+OVERLEAF_FIGURES = ROOT / "IEEE Paper" / "images" / "results"
 EXCLUDED = "eu-us-af-row-apac-ch/pf120_k050_a040"
 EQ1 = "ch-af-apac-eu-row-us/pf080_k100_a040"
 EQ2 = "ch-af-apac-eu-row-us/pf120_k100_a030"
@@ -116,9 +118,11 @@ def main() -> None:
                 source = staged / f"{stem}.{extension}"
                 if not source.is_file() or source.stat().st_size == 0:
                     raise RuntimeError(f"Figure was not generated: {source}")
+        OVERLEAF_FIGURES.mkdir(parents=True, exist_ok=True)
         for stem in STEMS:
             for extension in ("pdf", "png"):
                 shutil.copyfile(staged / f"{stem}.{extension}", PAPER_PLOTS / f"{stem}.{extension}")
+                shutil.copyfile(staged / f"{stem}.{extension}", OVERLEAF_FIGURES / f"{stem}.{extension}")
     print(f"Updated {len(STEMS)} paper figures using {len(retained)} profiles; excluded {EXCLUDED}")
 
 
