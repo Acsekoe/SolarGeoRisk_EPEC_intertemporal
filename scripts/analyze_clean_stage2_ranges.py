@@ -23,13 +23,11 @@ PREVIOUS_ANALYSIS = (
     ROOT / "outputs" / "new_equilibria" / "statistical_analysis_20260921"
 )
 DEFAULT_PLANNER_RESULTS = ROOT / "outputs" / "llp_planner" / "llp_planner_results.xlsx"
-# Equilibria discussed in detail in the paper: low-capacity/high-price outlier,
-# highest-capacity profile, and the profile closest to the median outcome.
-# Values are (label, label offset in points).
+# Equilibria discussed in the paper: highest-price profile and
+# highest-capacity profile. Values are (label, label offset in points).
 PAPER_HIGHLIGHTED_EQUILIBRIA = {
-    "eu-us-af-row-apac-ch/pf120_k050_a040": ("Eq 1", (26, 0)),
+    "ch-af-apac-eu-row-us/pf080_k100_a040": ("Eq 1", (0, 14)),
     "ch-af-apac-eu-row-us/pf120_k100_a030": ("Eq 2", (-4, 16)),
-    "ch-af-apac-eu-row-us/pf080_k050_a040": ("Eq 3", (2, -16)),
 }
 
 from scripts import analyze_equilibrium_ranges as base
@@ -755,6 +753,7 @@ def plot_welfare_difference_boxplots(
         if abbreviate_components else {name: name.lower() for name in colors}
     )
     regions = base.PAPER_REGION_ORDER
+    candidate_count = observations["candidate"].nunique()
     values_to_show = observations[value_column].to_numpy(float)
     if symmetric_axis:
         limit = max(5.0, 5.0 * np.ceil(np.abs(values_to_show).max() / 5.0))
@@ -780,8 +779,10 @@ def plot_welfare_difference_boxplots(
                 ][value_column].to_numpy(float)
                 for region in regions
             ]
-            if any(len(group) != 27 for group in values):
-                raise ValueError("Welfare boxplot requires 27 observations per group")
+            if any(len(group) != candidate_count for group in values):
+                raise ValueError(
+                    "Welfare boxplot requires one observation per candidate and group"
+                )
             ax.boxplot(
                 values, positions=positions, vert=False, widths=0.36,
                 whis=(0, 100), showfliers=False, patch_artist=True,

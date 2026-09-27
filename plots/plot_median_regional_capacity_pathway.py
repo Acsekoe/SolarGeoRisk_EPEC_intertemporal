@@ -42,17 +42,23 @@ plt.rcParams.update(
 )
 
 
-def main() -> None:
-    summary = pd.read_csv(ANALYSIS / "csv/capacity_summary.csv")
-    summary = summary[summary["year"].isin(YEARS) & summary["region"].isin(REGIONS)]
-    if len(summary) != len(YEARS) * len(REGIONS) or not (summary["n"] == 27).all():
-        raise ValueError("Expected one 27-outcome capacity median per region and year")
-    regional_medians = summary.pivot(index="year", columns="region", values="median")
+def plot_from_observations(
+    capacity_observations: pd.DataFrame,
+    system: pd.DataFrame,
+    output_dir: Path,
+) -> None:
+    observations = capacity_observations[
+        capacity_observations["year"].isin(YEARS)
+        & capacity_observations["region"].isin(REGIONS)
+    ]
+    candidate_count = observations["candidate"].nunique()
+    if candidate_count == 0 or len(observations) != candidate_count * len(YEARS) * len(REGIONS):
+        raise ValueError("Expected one capacity observation per candidate, region, and year")
+    regional_medians = observations.groupby(["year", "region"])["capacity_gw"].median().unstack()
     regional_medians = regional_medians.reindex(index=YEARS, columns=REGIONS)
     if regional_medians.isna().any().any():
         raise ValueError("Missing a regional capacity median")
 
-    system = pd.read_csv(ANALYSIS / "csv/system_metrics.csv")
     system = system[system["year"].isin(YEARS)]
     demand = system.groupby("year")["total_demand_gw"].median().reindex(YEARS)
     demand_spread = system.groupby("year")["total_demand_gw"].agg(
@@ -126,11 +132,17 @@ def main() -> None:
     )
     fig.subplots_adjust(left=0.13, right=0.98, top=0.96, bottom=0.31)
 
-    OUTPUT.mkdir(parents=True, exist_ok=True)
-    stem = OUTPUT / "median_regional_capacity_pathway"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    stem = output_dir / "median_regional_capacity_pathway"
     fig.savefig(stem.with_suffix(".pdf"), bbox_inches="tight", pad_inches=0.04)
     fig.savefig(stem.with_suffix(".png"), dpi=300, bbox_inches="tight", pad_inches=0.04)
     plt.close(fig)
+
+
+def main() -> None:
+    capacity_observations = pd.read_csv(ANALYSIS / "csv/capacity_observations.csv")
+    system = pd.read_csv(ANALYSIS / "csv/system_metrics.csv")
+    plot_from_observations(capacity_observations, system, OUTPUT)
 
 
 if __name__ == "__main__":
