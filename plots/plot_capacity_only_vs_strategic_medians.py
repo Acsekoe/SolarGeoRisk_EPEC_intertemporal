@@ -1,4 +1,4 @@
-"""Regional capacity and price paths: three capacity-only equilibria versus 27 strategic medians and the LLP benchmark."""
+"""Regional capacity and price paths: three capacity-only equilibria versus 14 strategic medians and the LLP benchmark."""
 
 from __future__ import annotations
 
@@ -26,6 +26,7 @@ REGIONS = (
 )
 YEARS = (2025, 2030, 2035, 2040)
 PLANNER_PATH = ROOT / "outputs" / "llp_planner" / "llp_planner_results.xlsx"
+RETAINED_PATH = ROOT / "outputs" / "paper_plots" / "14_equilibria" / "retained_profiles.txt"
 CAPACITY_COLOR = "#B64550"
 
 
@@ -47,12 +48,15 @@ def validate_and_load() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     if not capacity_protocol["fix_offers_to_cost"]:
         raise ValueError("The capacity-only run did not fix bilateral offers to cost")
 
-    selection = json.loads((STRATEGIC_ROOT / "results_selection.json").read_text())
-    excluded = {item["candidate"] for item in selection["excluded_candidates"]}
-    reported_strategic = accepted_branches(STRATEGIC_ROOT) - excluded
+    reported_strategic = {
+        line.strip() for line in RETAINED_PATH.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.startswith("#")
+    }
+    if not reported_strategic <= accepted_branches(STRATEGIC_ROOT):
+        raise ValueError("A retained profile is not an accepted strategic branch")
     reported_capacity = accepted_branches(CAPACITY_ROOT / "stage2")
-    if len(reported_strategic) != 27 or len(reported_capacity) != 3:
-        raise ValueError("Expected 27 strategic and 3 capacity-only accepted profiles")
+    if len(reported_strategic) != 14 or len(reported_capacity) != 3:
+        raise ValueError("Expected 14 strategic and 3 capacity-only accepted profiles")
 
     analysis_root = STRATEGIC_ROOT / "statistical_analysis"
     capacity_rows = pd.read_csv(analysis_root / "csv" / "capacity_observations.csv")
@@ -62,8 +66,9 @@ def validate_and_load() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
         on=["candidate", "region", "year"],
         validate="one_to_one",
     )
+    strategic = strategic.loc[strategic["candidate"].isin(reported_strategic)]
     if set(strategic["candidate"]) != reported_strategic:
-        raise ValueError("The strategic observations do not match the reported 27")
+        raise ValueError("The strategic observations do not match the reported 14")
 
     comparison = pd.read_csv(CAPACITY_ROOT / "stage2" / "comparison" / "regional_metrics.csv")
     fixed = comparison.loc[comparison["scenario"] == "fixed_cost_offers"].copy()
@@ -78,7 +83,7 @@ def validate_and_load() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
         raise ValueError("The capacity-only observations do not match the accepted three")
 
     expected = {(region, year) for region, _ in REGIONS for year in YEARS}
-    for label, frame, count in (("strategic", strategic, 27), ("fixed", fixed, 3)):
+    for label, frame, count in (("strategic", strategic, 14), ("fixed", fixed, 3)):
         if len(frame) != count * len(expected):
             raise ValueError(f"Wrong number of {label} observations")
         for candidate, group in frame.groupby("candidate"):
@@ -186,7 +191,7 @@ def draw(
             Line2D([0], [0], color=CAPACITY_COLOR, linewidth=1.35,
                    label="Three capacity-only equilibria"),
             Line2D([0], [0], color="#222222", marker="o", markersize=4.5,
-                   linewidth=1.8, label="Median of 27 strategic equilibria"),
+                   linewidth=1.8, label="Median of 14 strategic equilibria"),
         ]
         if column == "price_usd_per_kw":
             handles.append(

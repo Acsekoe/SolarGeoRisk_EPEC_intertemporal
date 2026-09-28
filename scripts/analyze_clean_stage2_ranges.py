@@ -845,8 +845,13 @@ def plot_regional_bands(
     show_individual_outcomes: bool = True,
     planner_prices: pd.DataFrame | None = None,
     stacked_legend: bool = False,
+    cost_lines: pd.DataFrame | None = None,
 ) -> None:
-    """Paper band plot over a specified common set of search branches."""
+    """Paper band plot over a specified common set of search branches.
+
+    ``cost_lines`` (columns region, year, cost_usd_per_kw) adds the regional
+    manufacturing cost as a dashed grey line, as in the original price figure.
+    """
     plot_frame = frame
     if display_candidates is not None:
         plot_frame = frame[frame["candidate"].isin(display_candidates)]
@@ -930,6 +935,22 @@ def plot_regional_bands(
                     linewidth=2.0,
                     marker="s",
                     markersize=4.5,
+                    zorder=5,
+                )
+            if cost_lines is not None:
+                cost = (
+                    cost_lines[cost_lines["region"] == region]
+                    .set_index("year")
+                    .loc[list(years)]
+                )
+                axis.plot(
+                    x,
+                    cost["cost_usd_per_kw"].to_numpy(float),
+                    color="#6E6E6E",
+                    linewidth=1.8,
+                    linestyle="--",
+                    marker="^",
+                    markersize=5.0,
                     zorder=5,
                 )
             if show_individual_outcomes:
@@ -1019,6 +1040,14 @@ def plot_regional_bands(
                         label="Global Welfare maximization",
                     )
                 )
+            if cost_lines is not None:
+                stacked_handles.append(
+                    Line2D(
+                        [0], [0], color="#6E6E6E", linewidth=1.8,
+                        linestyle="--", marker="^", markersize=5.0,
+                        label="Regional manufacturing costs",
+                    )
+                )
             figure.legend(
                 handles=stacked_handles,
                 loc="lower center",
@@ -1048,6 +1077,7 @@ def plot_regional_bands(
                 bbox_to_anchor=(0.5, 0.065),
             )
         legend_margin = (
+            0.33 if cost_lines is not None else
             0.30 if planner_prices is not None else
             0.27 if stacked_legend else
             0.20
