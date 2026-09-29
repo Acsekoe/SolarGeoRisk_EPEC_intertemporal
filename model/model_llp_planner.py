@@ -58,7 +58,7 @@ def build_llp_planner_model(
     data: ModelData,
     *,
     working_directory: str | None = None,
-    discount_rate: float = 0.02,
+    discount_rate: float | None = None,
     base_year: int = 2025,
 ) -> ModelContext:
     """Build the intertemporal global-planner LLP benchmark.
@@ -124,15 +124,26 @@ def build_llp_planner_model(
         (r, tp): float(data.c_man.get(r, 0.0)) for r in regions for tp in times
     }
 
-    # Discounting — use RunConfig-style override if non-default, else use data.beta_t
-    if data.beta_t:
-        beta_t_dict: Dict[str, float] = dict(data.beta_t)
-    else:
+    # Discounting for the planning objective and reported shadow prices.
+    # An explicit rate overrides any discount factors loaded from the workbook.
+    # Keep ModelData in sync because dual extraction also uses data.beta_t.
+    if discount_rate is not None:
         r_disc = float(discount_rate)
+        if r_disc <= -1.0:
+            raise ValueError("discount_rate must be greater than -1")
         beta_t_dict = {
-            tp: (1.0 if r_disc == 0.0 else 1.0 / ((1.0 + r_disc) ** (int(tp) - base_year)))
+            tp: 1.0 / ((1.0 + r_disc) ** (int(tp) - base_year))
             for tp in times
         }
+        data.beta_t = beta_t_dict
+        data.settings = dict(data.settings or {})
+        data.settings["discount_rate"] = r_disc
+        data.settings["base_year"] = base_year
+    elif data.beta_t:
+        beta_t_dict: Dict[str, float] = dict(data.beta_t)
+    else:
+        beta_t_dict = {tp: 1.0 for tp in times}
+        data.beta_t = beta_t_dict
 
     ytn_dict: Dict[str, float] = dict(data.years_to_next) if data.years_to_next else {
         tp: 5.0 for tp in times
@@ -510,6 +521,10 @@ if __name__ == "__main__":
                         help="Directory for llp_planner_results.xlsx")
     parser.add_argument("--terminal-salvage-fraction", type=float, default=None,
                         help="Override terminal capacity salvage fraction")
+    parser.add_argument("--discount-rate", type=float, default=0.02,
+                        help="Annual discount rate (default: 0.02, matching EPEC runs)")
+    parser.add_argument("--base-year", type=int, default=2025,
+                        help="Base year for an explicit discount-rate override")
     args = parser.parse_args()
     input_path = os.path.abspath(args.input)
 
@@ -520,7 +535,11 @@ if __name__ == "__main__":
         data.settings["terminal_salvage_fraction"] = args.terminal_salvage_fraction
 
     print("=== Building LLP Planner ===")
-    ctx = build_llp_planner_model(data)
+    ctx = build_llp_planner_model(
+        data, discount_rate=args.discount_rate, base_year=args.base_year
+    )
+    print(f"[PLANNER] discount_rate={(data.settings or {}).get('discount_rate', 0.0)}")
+    print(f"[PLANNER] beta_t={data.beta_t}")
 
     print("=== Solving ===")
     solve_llp_planner(ctx, solver="ipopt")
@@ -639,6 +658,8 @@ if __name__ == "__main__":
                 {"key": "operating_obj_total", "value": sum(row["obj"] for row in rows_rp)},
                 {"key": "terminal_salvage_total", "value": sum(salvage_by_region.values())},
                 {"key": "terminal_salvage_fraction", "value": salvage_fraction},
+                {"key": "discount_rate", "value": float((data.settings or {}).get("discount_rate", 0.0))},
+                {"key": "base_year", "value": int((data.settings or {}).get("base_year", args.base_year))},
                 {"key": "solver",          "value": "ipopt"},
                 {"key": "solve_status",    "value": str(ctx.models["planner"].solve_status)},
                 {"key": "model_status",    "value": str(ctx.models["planner"].status)},
