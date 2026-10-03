@@ -121,7 +121,7 @@ def plot_from_observations(
             Line2D([0], [0], color=COLOR_DEMAND, linestyle="-.", marker="^",
                    linewidth=1.8, markersize=6.2, label="Global demand"),
             Line2D([0], [0], color=COLOR_PLAN, linestyle="--", marker="*",
-                   linewidth=1.8, markersize=8.0, label="Planner capacity"),
+                   linewidth=1.8, markersize=8.0, label="Centralized benchmark"),
         ]
     )
     ax.legend(

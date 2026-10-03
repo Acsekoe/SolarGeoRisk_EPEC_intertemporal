@@ -814,7 +814,7 @@ def plot_welfare_difference_boxplots(
                 Patch(facecolor=colors[component], edgecolor=colors[component],
                       alpha=0.52, label=(
                           f"{legend_prefix} {component_labels[component]} "
-                          "difference to global welfare maximization"
+                          "difference to centralized benchmark"
                       ))
                 for component in colors
             ],
@@ -1037,7 +1037,7 @@ def plot_regional_bands(
                     Line2D(
                         [0], [0], color="#2E6F40", linewidth=2.0,
                         marker="s", markersize=4.5,
-                        label="Global Welfare maximization",
+                        label="Centralized benchmark",
                     )
                 )
             if cost_lines is not None:
