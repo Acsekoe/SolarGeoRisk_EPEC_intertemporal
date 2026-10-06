@@ -196,7 +196,7 @@ def draw(
         if column == "price_usd_per_kw":
             handles.append(
                 Line2D([0], [0], color="#2E6F40", marker="s", markersize=4.5,
-                       linewidth=2.0, label="LLP benchmark")
+                       linewidth=2.0, label="Centralized benchmark")
             )
         fig.legend(
             handles=handles, loc="lower center", ncol=1,
