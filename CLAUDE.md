@@ -14,7 +14,7 @@ Each entry should be a short, self-contained note — 2–5 sentences max — th
 
 ## Overleaf Git Sync
 
-If the user asks to "push IEEE Paper to master" or "sync overleaf" or anything similar, it means the AI should automatically execute the following sequence of commands (with `run_command` replacing the cd command with `Cwd: 'c:\EEG\EPEC\EPEC_VS_code\SolarGeoRisk_EPEC_intertemporal\IEEE Paper'`):
+If the user asks to "push IEEE Paper to master" or "sync overleaf" or anything similar, it means the AI should automatically execute the following sequence of commands (with `run_command` replacing the cd command with `Cwd: 'D:\Alexander\Studium\EEG\VS_Code\SolarGeoRisk_EPEC_intertemporal\IEEE Paper'`):
 
 ```bash
 git add .
