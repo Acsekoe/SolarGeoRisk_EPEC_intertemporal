@@ -14,12 +14,25 @@ Each entry should be a short, self-contained note — 2–5 sentences max — th
 
 ## Overleaf Git Sync
 
-If the user asks to "push IEEE Paper to master" or "sync overleaf" or anything similar, it means the AI should automatically execute the following sequence of commands (with `run_command` replacing the cd command with `Cwd: 'D:\Alexander\Studium\EEG\VS_Code\SolarGeoRisk_EPEC_intertemporal\IEEE Paper'`):
+If the user asks to "push IEEE Paper to master" or "sync overleaf" or anything similar, it means the AI should automatically execute the following two steps.
+
+**1. Push the paper to Overleaf** (with `run_command` replacing the cd command with `Cwd: 'D:\Alexander\Studium\EEG\VS_Code\SolarGeoRisk_EPEC_intertemporal\IEEE Paper'`):
 
 ```bash
 git add .
 git commit -m "Updated paper from AI assistant"
+git pull --no-rebase origin master
 git push origin master
+```
+
+The pull merges any edits made in the Overleaf web editor. If it reports a conflict, stop and show the conflict to the user before pushing.
+
+**2. Update the paper pointer on GitHub** (with `Cwd: 'D:\Alexander\Studium\EEG\VS_Code\SolarGeoRisk_EPEC_intertemporal'`). GitHub stores `IEEE Paper` only as a pointer to an Overleaf commit, so it must be moved after every Overleaf push:
+
+```bash
+git add "IEEE Paper"
+git commit -m "Update IEEE Paper submodule pointer"
+git push origin main
 ```
 
 
